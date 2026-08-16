@@ -50,9 +50,11 @@ export const TRUSTEE_IS_UNKNOWN = 0
 export const TRUSTEE_IS_SID = 0
 /** Trustee record has no chained trustee. */
 export const NO_MULTIPLE_TRUSTEE = 0
-/** EXPLICIT_ACCESS mode that grants access. */
+/** EXPLICIT_ACCESS mode that adds the entry as an allow ACE. */
 export const GRANT_ACCESS = 1
-/** EXPLICIT_ACCESS mode that revokes access. */
+/** EXPLICIT_ACCESS mode that adds the entry as a deny ACE. */
+export const DENY_ACCESS = 3
+/** EXPLICIT_ACCESS mode that removes the matching allow ACE. */
 export const REVOKE_ACCESS = 4
 /** ACE inheritance flags for child containers and objects. */
 export const SUB_CONTAINERS_AND_OBJECTS_INHERIT = 0x3
@@ -80,10 +82,27 @@ export const LOCKFILE_EXCLUSIVE_LOCK = 0x2
 export const LOCKFILE_FAIL_IMMEDIATELY = 0x1
 /** ACE type for an allowed-access entry. */
 export const ACCESS_ALLOWED_ACE_TYPE = 0
+/** ACE type for an access-denied entry. */
+export const ACCESS_DENIED_ACE_TYPE = 1
 /** Maximum SID sub-authority count. */
 export const SID_MAX_SUB_AUTHORITIES = 15
 /** ACE flag marking inherited entries. */
 export const INHERITED_ACE = 0x10
+/** OBJECT_INHERIT_ACE: the ACE propagates to child objects (files). */
+export const OBJECT_INHERIT_ACE = 0x1
+/** CONTAINER_INHERIT_ACE: the ACE propagates to child containers (directories). */
+export const CONTAINER_INHERIT_ACE = 0x2
+/** NO_PROPAGATE_INHERIT_ACE: the ACE propagates exactly one level. */
+export const NO_PROPAGATE_INHERIT_ACE = 0x4
+/** INHERIT_ONLY_ACE: the ACE applies only to propagating children, not the object itself. */
+export const INHERIT_ONLY_ACE = 0x8
+/**
+ * ACE_INHERIT_BITS: the AceFlags bits preserved when an inherited ACE is
+ * materialized as an explicit one (the four inheritance bits). Everything
+ * else — notably {@link INHERITED_ACE} — is dropped.
+ */
+export const ACE_INHERIT_BITS = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | NO_PROPAGATE_INHERIT_ACE | INHERIT_ONLY_ACE
+
 /** Maximum SID allocation size in bytes. */
 export const SECURITY_MAX_SID_SIZE = 68
 /** x64 SID_AND_ATTRIBUTES byte size. */

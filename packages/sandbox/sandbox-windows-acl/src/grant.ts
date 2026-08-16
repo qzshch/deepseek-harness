@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-sandbox-windows-acl/grant
  */
 
-import { grantWrite, revokeWrite } from './acl.ts'
+import { grantWrite, revokeWrite, selfContainDacl } from './acl.ts'
 import { allocPtrSlot, decodePtr, isNullPtr, throwLastError, win32Sync } from './ffi.ts'
 import type { NativePtr, Win32Bindings } from './ffi.ts'
 
@@ -61,11 +61,15 @@ export class AclWriteGrant {
    * Grant the write ACE on one directory (idempotent: an already-standing
    * exact ACE skips the eager full-tree re-propagation — see
    * {@link grantWrite}) and record the path for {@link dispose} unless it is
-   * standing. The path is recorded BEFORE the grant: a post-apply throw (a
-   * LocalFree failure after SetNamedSecurityInfoW succeeded) must still
-   * revoke it, and revoking an ungranted path is a no-op merge. Callers
-   * treat a throw as a failed materialization and dispose the instance to
-   * revoke the paths granted so far.
+   * standing. A revocable (temp) path is first made DACL self-contained
+   * ({@link selfContainDacl}) so a private directory created under any temp
+   * root — including a system root like `C:\Windows\Temp` — keeps its
+   * creator's access across the grant's SetNamedSecurityInfoW re-apply. The
+   * path is recorded BEFORE the grant: a post-apply throw (a LocalFree
+   * failure after SetNamedSecurityInfoW succeeded) must still revoke it, and
+   * revoking an ungranted path is a no-op merge. Callers treat a throw as a
+   * failed materialization and dispose the instance to revoke the paths
+   * granted so far.
    * @param path - the directory whose DACL gains the grant.
    * @param standing - the ACE outlives this grant (the workspace reuse
    *   cache; dispose() skips revoking it). Default false (revoked on
@@ -73,6 +77,7 @@ export class AclWriteGrant {
    */
   add(path: string, standing = false): void {
     ;(standing ? this.standingPaths : this.revocablePaths).push(path)
+    if (!standing) selfContainDacl(this.api, path)
     grantWrite(this.api, path, this.sidPtr)
   }
 

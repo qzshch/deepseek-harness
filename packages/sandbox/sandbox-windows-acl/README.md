@@ -117,6 +117,7 @@ The seam materializes the deterministic workspace SID's ACE standing (once per w
 - **Granted directories must be caller-owned** — the owner's implicit `WRITE_DAC` is what lets the sandbox edit the DACL without elevation.
 - **The ambient temp root is never granted implicitly** — direct callers must supply an existing private `tempDir` plus its distinct `tempWriteSid`, or disable temp writes with `tempDir: null`; the actual temp directory must be disjoint from every writable root.
 - **The confined child's temp capability is private per live session/workspace pair** — the runner rewrites TMP/TEMP to that private directory before the spawn; two tokens sharing the same workspace SID cannot write one another's temp directories.
+- **Private temp directories are made DACL self-contained before the capability grant** — a revocable path is first passed through `selfContainDacl`, which materializes the directory's inherited ACEs as explicit ones (inheritance bits kept, the inherited marker dropped), so the grant's `SetNamedSecurityInfoW` re-apply cannot lose them to re-propagation; workspace roots are never self-contained (their inheritance is the standing reuse cache).
 - **`whoami` and token-inspection cmdlets fail under the restricted token** — `GetTokenInformation` on the duplicate is partially unavailable to the child, which is diagnostic noise rather than an operational failure.
 
 ### Header verification and source map

@@ -28,6 +28,11 @@
  *    STATUS_DLL_INIT_FAILED under the restriction);
  *  - the private temp directory and every writable directory must be owned by the
  *    caller (owner-implicit WRITE_DAC);
+ *  - a private temp directory is made DACL self-contained (see
+ *    {@link selfContainDacl}) before its capability grant, so a directory
+ *    created under a SYSTEM temp root (machine-level TMP/TEMP pointing at
+ *    C:\Windows\Temp) keeps its creator's access across the grant's
+ *    SetNamedSecurityInfoW re-apply;
  *  - grants are standing ACE mutations on real directories. WORKSPACE grants
  *    are deliberately never revoked — the ACE is the cross-session reuse
  *    cache (revoking would force the next session to re-propagate the whole
@@ -44,7 +49,7 @@ import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Win32Error } from '@deepseek-ai/dsh-win32-process'
 
-import { grantWrite, revokeWrite } from './acl.ts'
+import { grantWrite, revokeWrite, selfContainDacl } from './acl.ts'
 import { allocPtrSlot, decodePtr, isNullPtr, throwLastError, win32 } from './ffi.ts'
 import type { NativePtr, Win32Bindings } from './ffi.ts'
 import { assertPrivateTempDisjoint } from './path-boundary.ts'
@@ -54,6 +59,7 @@ import * as abi from './win32-abi.ts'
 
 export { AclWriteGrant } from './grant.ts'
 export { assertTempRootOutsideWorkspace } from './path-boundary.ts'
+export { selfContainDacl } from './acl.ts'
 export { tempWriteSid, workspaceWriteSid } from './workspace-sid.ts'
 /** Construction options: the workspace/temp allowlists and their distinct SID identities. */
 export interface AclSandboxOptions {
@@ -253,7 +259,11 @@ export class AclSandbox {
       // per-workspace reuse cache — dispose() never revokes them, or the next
       // provision would re-propagate the whole tree) and the temp ACE is
       // REVOCABLE (dispose() removes it before the private directory is
-      // deleted; the ambient temp root is never granted).
+      // deleted; the ambient temp root is never granted). The private temp
+      // directory is first made DACL self-contained ({@link selfContainDacl})
+      // so a directory created under a system temp root keeps its creator's
+      // access across the grant's re-apply (the runner's agentless flow owns
+      // the directory and this init grants it).
       if (this.manageDacls) {
         if (this.writeSidPtr !== undefined) {
           for (const path of this.writableDirs) {
@@ -264,6 +274,7 @@ export class AclSandbox {
             // apply (a LocalFree failure), and the fail-closed catch must still
             // revoke that path (revoking an ungranted path is a no-op merge).
             this.grantedPaths.push({ path: tempDir, sidPtr: this.tempWriteSidPtr })
+            selfContainDacl(api, tempDir)
             grantWrite(api, tempDir, this.tempWriteSidPtr)
           }
         }
