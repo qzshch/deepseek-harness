@@ -119,9 +119,12 @@ export const TRUSTEE_IS_SID = 0
 /** NO_MULTIPLE_TRUSTEE: Trustee.pMultipleTrustee is null. */
 export const NO_MULTIPLE_TRUSTEE = 0
 
-// ACCESS_MODE (accctrl.h line ~127: NOT_USED_ACCESS=0, GRANT_ACCESS=1, REVOKE_ACCESS=4)
+// ACCESS_MODE (accctrl.h line ~127: NOT_USED_ACCESS=0, GRANT_ACCESS=1,
+// SET_ACCESS=2, DENY_ACCESS=3, REVOKE_ACCESS=4)
 /** GRANT_ACCESS: SetEntriesInAclW adds the entry as an allow ACE. */
 export const GRANT_ACCESS = 1
+/** DENY_ACCESS: SetEntriesInAclW adds the entry as a deny ACE. */
+export const DENY_ACCESS = 3
 /** REVOKE_ACCESS: SetEntriesInAclW removes the matching allow ACE. */
 export const REVOKE_ACCESS = 4
 
@@ -204,6 +207,8 @@ export const LOCKFILE_FAIL_IMMEDIATELY = 0x1
 // ACE_HEADER.AceType (winnt.h lines ~3449-3463)
 /** ACCESS_ALLOWED_ACE_TYPE: an access-allowed ACE granting the mask to the trustee. */
 export const ACCESS_ALLOWED_ACE_TYPE = 0
+/** ACCESS_DENIED_ACE_TYPE: an access-denied ACE refusing the mask to the trustee. */
+export const ACCESS_DENIED_ACE_TYPE = 1
 
 // SID structure (winnt.h line ~280 SID_IDENTIFIER_AUTHORITY; line ~286
 // #define SID_MAX_SUB_AUTHORITIES 15).
@@ -215,6 +220,20 @@ export const SID_MAX_SUB_AUTHORITIES = 15
 // DACL edits this module makes.
 /** INHERITED_ACE: the ACE was inherited from the parent object, not stored explicitly. */
 export const INHERITED_ACE = 0x10
+/** OBJECT_INHERIT_ACE: the ACE propagates to child objects (files). */
+export const OBJECT_INHERIT_ACE = 0x1
+/** CONTAINER_INHERIT_ACE: the ACE propagates to child containers (directories). */
+export const CONTAINER_INHERIT_ACE = 0x2
+/** NO_PROPAGATE_INHERIT_ACE: the ACE propagates exactly one level. */
+export const NO_PROPAGATE_INHERIT_ACE = 0x4
+/** INHERIT_ONLY_ACE: the ACE applies only to propagating children, not the object itself. */
+export const INHERIT_ONLY_ACE = 0x8
+/**
+ * ACE_INHERIT_BITS: the AceFlags bits preserved when an inherited ACE is
+ * materialized as an explicit one (the four inheritance bits). Everything
+ * else — notably {@link INHERITED_ACE} — is dropped.
+ */
+export const ACE_INHERIT_BITS = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | NO_PROPAGATE_INHERIT_ACE | INHERIT_ONLY_ACE
 
 // ---- job object (winnt.h lines ~4859-4866, ~5138, ~5190-5199) --------------
 

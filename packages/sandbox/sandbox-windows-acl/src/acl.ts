@@ -13,7 +13,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { accessSync, constants, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { allocOverlapped, allocPtrSlot, decodePtr, decodeUint8At, decodeUint16At, decodeUint32At, getTempPath, isInvalidHandle, isNullPtr, ptrAddress, sameSidAt, throwLastError, throwWin32 } from './ffi.ts'
@@ -134,6 +134,38 @@ function readCurrentDacl(api: Win32Bindings, path: string): { oldAcl: NativePtr 
 }
 
 /**
+ * Shared tail of the ACL-edit helpers: apply `newAcl` to the directory's
+ * DACL, freeing the descriptor allocation (which owns the old ACL) before the
+ * apply and the merged ACL after it, checking every call and reporting with
+ * the caller's label. The caller owns `newAcl` and the descriptor block
+ * through this call; both are freed here.
+ * @param api - the binding table.
+ * @param path - the directory the DACL edit applies to.
+ * @param newAcl - the merged ACL to apply (SetEntriesInAclW output).
+ * @param descriptor - the descriptor allocation owning the read old ACL, or null.
+ * @param label - the caller's name for error details.
+ */
+function applyAcl(
+  api: Win32Bindings,
+  path: string,
+  newAcl: NativePtr,
+  descriptor: NativePtr | null,
+  label: string,
+): void {
+  // The descriptor block (oldAcl included) is dead after the merge — free it
+  // before applying, exactly like the POC.
+  const freedDescriptor = descriptor !== null ? api.localFree(descriptor) : null
+  const applyResult = api.setNamedSecurityInfoW(
+    path, abi.SE_FILE_OBJECT, abi.DACL_SECURITY_INFORMATION,
+    null, null, newAcl, null,
+  )
+  const freedNew = api.localFree(newAcl)
+  if (applyResult !== abi.ERROR_SUCCESS) throwWin32(api, 'SetNamedSecurityInfoW', applyResult, `${label}(${path})`)
+  if (freedDescriptor !== null && !isNullPtr(freedDescriptor)) throwLastError(api, 'LocalFree', `${label}(${path}) descriptor`)
+  if (!isNullPtr(freedNew)) throwLastError(api, 'LocalFree', `${label}(${path}) new ACL`)
+}
+
+/**
  * Shared tail of grantWrite and revokeWrite: merge `entry` into `oldAcl`
  * (null = no explicit DACL yet; SetEntriesInAclW builds one from scratch),
  * free the descriptor before applying the merged ACL, apply it, then free the
@@ -164,18 +196,125 @@ function mergeAndApply(
     if (descriptor !== null) api.localFree(descriptor)
     throwWin32(api, 'SetEntriesInAclW', api.getLastError(), `${label}(${path}): null new ACL`)
   }
+  applyAcl(api, path, newAcl, descriptor, label)
+}
 
-  // The descriptor block (oldAcl included) is dead after the merge — free it
-  // before applying, exactly like the POC.
-  const freedDescriptor = descriptor !== null ? api.localFree(descriptor) : null
-  const applyResult = api.setNamedSecurityInfoW(
-    path, abi.SE_FILE_OBJECT, abi.DACL_SECURITY_INFORMATION,
-    null, null, newAcl, null,
-  )
-  const freedNew = api.localFree(newAcl)
-  if (applyResult !== abi.ERROR_SUCCESS) throwWin32(api, 'SetNamedSecurityInfoW', applyResult, `${label}(${path})`)
-  if (freedDescriptor !== null && !isNullPtr(freedDescriptor)) throwLastError(api, 'LocalFree', `${label}(${path}) descriptor`)
-  if (!isNullPtr(freedNew)) throwLastError(api, 'LocalFree', `${label}(${path}) new ACL`)
+/**
+ * Make a directory's DACL self-contained: every ACE inherited from the
+ * parent is materialized as an explicit ACE (its inheritance bits preserved,
+ * the {@link abi.INHERITED_ACE} marker dropped). A later
+ * SetNamedSecurityInfoW re-apply — the grant/revoke merge path — then cannot
+ * lose those ACEs to re-propagation: with no inherited ACEs left, Windows
+ * applies the new DACL as-is instead of recomputing inheritance from the
+ * parent. This matters for PRIVATE temp directories created under a system
+ * temp root like `C:\Windows\Temp`, whose inherited-ACE shape can otherwise
+ * leave the creator with no usable ACE after a re-apply (the directory
+ * becomes invisible to the user who just created it — `existsSync` false and
+ * every sandboxed command fail-closed). Callers apply it to a fresh temp
+ * directory BEFORE granting the capability ACE; workspace roots must NOT be
+ * passed here (their inherited ACEs are the standing reuse cache and the
+ * propagation relationship is intentional).
+ *
+ * Fail-closed: an unsupported ACE type (DACLs may only carry allow/deny
+ * ACEs), an implausible ACL layout, or any Win32 failure throws without
+ * applying a partial DACL — an ACE is never silently dropped.
+ * @param api - the binding table.
+ * @param path - the directory whose DACL is made self-contained.
+ */
+export function selfContainDacl(api: Win32Bindings, path: string): void {
+  withPathLock(api, path, () => {
+    const { oldAcl, descriptor } = readCurrentDacl(api, path)
+    if (oldAcl === null) {
+      // No DACL: a null DACL grants everyone full access and carries no
+      // inherited ACEs that a re-apply could lose — already self-contained.
+      if (descriptor !== null) {
+        const freed = api.localFree(descriptor)
+        if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `selfContainDacl(${path}) descriptor`)
+      }
+      return
+    }
+    const aclSize = decodeUint16At(oldAcl, 2)
+    const aceCount = decodeUint16At(oldAcl, 4)
+    if (aclSize < 8 || aclSize > 1_048_576) {
+      if (descriptor !== null) api.localFree(descriptor)
+      throw new Error(`selfContainDacl(${path}): implausible ACL size ${aclSize}`)
+    }
+    interface MaterializedAce {
+      /** The ACE's access mask, carried verbatim. */
+      mask: number
+      /** The ACE's inheritance bits (OI|CI|NP|IO), carried verbatim. */
+      inherit: number
+      /** GRANT_ACCESS for an allow ACE, DENY_ACCESS for a deny ACE. */
+      mode: number
+      /** Absolute address of the ACE's inline SID inside the descriptor allocation. */
+      sidAddress: bigint
+    }
+    const aces: MaterializedAce[] = []
+    let hasInherited = false
+    let offset = 8 // the first ACE follows the 8-byte ACL header
+    for (let index = 0; index < aceCount; index++) {
+      const aceSize = decodeUint16At(oldAcl, offset + 2)
+      if (aceSize < 8 || offset + aceSize > aclSize) {
+        if (descriptor !== null) api.localFree(descriptor)
+        throw new Error(`selfContainDacl(${path}): implausible ACE at offset ${offset}`)
+      }
+      const aceType = decodeUint8At(oldAcl, offset)
+      const mode = aceType === abi.ACCESS_ALLOWED_ACE_TYPE
+        ? abi.GRANT_ACCESS
+        : aceType === abi.ACCESS_DENIED_ACE_TYPE
+          ? abi.DENY_ACCESS
+          : undefined
+      if (mode === undefined) {
+        if (descriptor !== null) api.localFree(descriptor)
+        throw new Error(`selfContainDacl(${path}): unsupported DACL ACE type ${aceType}`)
+      }
+      const aceFlags = decodeUint8At(oldAcl, offset + 1)
+      if ((aceFlags & abi.INHERITED_ACE) !== 0) hasInherited = true
+      aces.push({
+        mask: decodeUint32At(oldAcl, offset + 4),
+        inherit: aceFlags & abi.ACE_INHERIT_BITS,
+        mode,
+        // The SID is INLINE in the ACE (see hasExactGrant); the entry names
+        // its address inside the descriptor allocation, which stays alive
+        // until SetEntriesInAclW has consumed the entries.
+        sidAddress: ptrAddress(oldAcl) + BigInt(offset + 8),
+      })
+      offset += aceSize
+    }
+    if (!hasInherited) {
+      // No inherited ACEs to materialize — the DACL already re-applies intact.
+      if (descriptor !== null) {
+        const freed = api.localFree(descriptor)
+        if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `selfContainDacl(${path}) descriptor`)
+      }
+      return
+    }
+    const entries = Buffer.alloc(aces.length * abi.EXPLICIT_ACCESS_W_SIZE)
+    aces.forEach((ace, index) => {
+      const entry = entries.subarray(index * abi.EXPLICIT_ACCESS_W_SIZE, (index + 1) * abi.EXPLICIT_ACCESS_W_SIZE)
+      entry.writeUInt32LE(ace.mask, 0) // grfAccessPermissions
+      entry.writeUInt32LE(ace.mode, 4) // grfAccessMode
+      entry.writeUInt32LE(ace.inherit, 8) // grfInheritance (materialized bits)
+      entry.writeUInt32LE(abi.NO_MULTIPLE_TRUSTEE, 24) // Trustee.MultipleTrusteeOperation
+      entry.writeUInt32LE(abi.TRUSTEE_IS_SID, 28) // Trustee.TrusteeForm
+      entry.writeUInt32LE(abi.TRUSTEE_IS_UNKNOWN, 32) // Trustee.TrusteeType
+      entry.writeBigUInt64LE(ace.sidAddress, 40) // Trustee.ptstrName
+    })
+    // Rebuild from scratch: the old ACL is passed as null so EVERY ACE is
+    // regenerated from the entries — inherited ACEs come out explicit.
+    const newAclSlot = allocPtrSlot()
+    const mergeResult = api.setEntriesInAclW(aces.length, entries, null, newAclSlot)
+    if (mergeResult !== abi.ERROR_SUCCESS) {
+      if (descriptor !== null) api.localFree(descriptor)
+      throwWin32(api, 'SetEntriesInAclW', mergeResult, `selfContainDacl(${path})`)
+    }
+    const newAcl = decodePtr(newAclSlot)
+    if (newAcl === null) {
+      if (descriptor !== null) api.localFree(descriptor)
+      throwWin32(api, 'SetEntriesInAclW', api.getLastError(), `selfContainDacl(${path}): null new ACL`)
+    }
+    applyAcl(api, path, newAcl, descriptor, 'selfContainDacl')
+  })
 }
 
 /**
@@ -213,6 +352,32 @@ function hasExactGrant(oldAcl: NativePtr, sidPtr: NativePtr): boolean {
 }
 
 /**
+ * Post-apply creator-access check: after a DACL re-apply the CREATOR must
+ * still be able to stat the directory (FILE_READ_ATTRIBUTES). Under a
+ * system temp root whose inherited-ACE shape does not survive
+ * SetNamedSecurityInfoW re-propagation, the re-apply can leave the creator
+ * with no usable ACE — the runner's later existsSync gate then reports the
+ * misleading "--temp is not an existing directory" and every sandboxed
+ * command fails closed. Fail loudly here with the real cause instead. A
+ * directory that does not exist (ENOENT) is a caller bug, not a lockout,
+ * and is left to the caller's own error handling.
+ * @param path - the directory whose DACL was just re-applied.
+ * @param label - the caller's name for error details.
+ */
+function verifyCreatorAccess(path: string, label: string): void {
+  try {
+    accessSync(path, constants.R_OK | constants.W_OK)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw new Error(
+      `${label}(${path}): after the DACL re-apply the directory is no longer accessible to its creator `
+      + `(${error instanceof Error ? error.message : String(error)}); the temp root's inherited-ACE shape does not `
+      + 'survive SetNamedSecurityInfoW re-propagation — point TMP/TEMP at a user-owned directory',
+    )
+  }
+}
+
+/**
  * Grant `GRANT_MASK` (Write+Delete, displays as "Modify") to the capability SID
  * on `path`, inheriting to subcontainers and objects. Idempotent: when the
  * directory's current explicit DACL already carries the exact ACE (the
@@ -223,7 +388,10 @@ function hasExactGrant(oldAcl: NativePtr, sidPtr: NativePtr): boolean {
  * directory's CURRENT explicit DACL (same shape as {@link revokeWrite}), so
  * pre-existing explicit ACEs survive. Runs under the per-path lock. The
  * directory must be owned by the caller (owner implicit WRITE_DAC) — same
- * precondition as the POC.
+ * precondition as the POC. After a real apply the creator's access is
+ * re-verified ({@link verifyCreatorAccess}) so a re-propagation that locks
+ * the creator out fails with the true cause instead of a misleading
+ * missing-directory error at the runner boundary.
  * @param api - the binding table.
  * @param path - the directory whose DACL gains the grant (the workspace or temp root).
  * @param sidPtr - the capability SID the ACE names.
@@ -240,6 +408,7 @@ export function grantWrite(api: Win32Bindings, path: string, sidPtr: NativePtr):
       return
     }
     mergeAndApply(api, path, buildExplicitAccess(sidPtr, abi.GRANT_ACCESS, abi.GRANT_MASK), oldAcl, descriptor, 'grantWrite')
+    verifyCreatorAccess(path, 'grantWrite')
   })
 }
 

@@ -82,6 +82,7 @@ koffi 结构体定义在模块加载时对照探针断言其大小，因此头�
 - **被授权目录必须由调用者拥有。** 所有者的隐式 `WRITE_DAC` 是沙盒无需提权即可编辑 DACL 的原因。
 - **环境临时根目录绝不会被隐式授权。** 直接使用 `AclSandbox` 的 workspace-write 调用方必须提供一个已存在的私有 `tempDir` 及其不同的 `tempWriteSid`，或通过 `tempDir: null` 显式禁用临时写入。实际临时目录不得与任何可写根目录重叠。seam 会创建随机私有目录；无 agent runner 调用把 `--temp` 视为父根目录并自行创建随机子目录，但如果工作区等于或包含该父根目录，就会在任何 ACL 改动前拒绝调用。
 - **受限子进程的临时能力按每个活跃的会话/工作区对私有。** runner 在 spawn 之前用 `SetEnvironmentVariableW` 把 TMP/TEMP 改写为该私有目录，子进程继承改写后的环境块（bwrap `--tmpfs /tmp` 的语义）。临时 ACE 与目录会在提供方 dispose 时移除，或在每次无 agent 调用后移除。崩溃可能留下失效的 `%TEMP%` 垃圾，但恢复后的提供方会选择新的随机路径和 SID，而不会与残留发生冲突或重新向其授权。原生 runner 套件证明，共享同一工作区 SID 的两个令牌无法写入彼此的临时目录。
+- **私有临时目录在能力授权前先把 DACL 自包含。** 可回收路径（`AclWriteGrant.add(path)`；`manageDacls` 下的 `AclSandbox.init` 亦然）会先经过 `selfContainDacl`，把目录的继承 ACE 物化为显式 ACE（保留继承位，去掉继承标记）。这样授权时的 `SetNamedSecurityInfoW` 重放就不会因重新传播而丢失这些 ACE——当环境临时根是系统目录（机器级 `TMP`/`TEMP` 指向 `C:\Windows\Temp`）时这一点至关重要：不做物化，重放可能让创建者失去任何可用 ACE，runner 随后的 `existsSync` 门槛就会报出误导性的 `--temp is not an existing directory`，同时每条沙箱命令 fail-closed。工作区根目录绝不会自包含：它们的继承 ACE 与传播关系是刻意的（常驻复用缓存）。
 - **受限令牌下 `whoami` 与令牌检查 cmdlet 会失败。** 子进程对复制令牌的 `GetTokenInformation` 部分不可用，因此 `whoami /all` 报错——这是限制方案的诊断噪音，不是运行故障；真正重要的拒绝面（文件写入）不受影响。
 
 ## 模型体验
