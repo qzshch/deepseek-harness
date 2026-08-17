@@ -9,7 +9,10 @@
 | `resolveConfigPath(path, snapshotMode, cwd?)` | 生成绝对配置路径；当 `snapshotMode === 'replay'` 时，把 basename 为 `cordis.yml`/`.yaml` 的文件替换为同级 `cordis.snapshot.yml` |
 | `loadEnv(binName, dir?, warn?)` | 加载已被 git 忽略的 `.env`（Node `process.loadEnvFile`）；文件不存在不影响启动，文件无法加载时输出一行带标签的警告（默认写入 stderr） |
 | `loadLayeredEnv(binName, cwd?, warn?)` | 构建产品 CLI（命令行界面）冻结的「继承环境 > 项目 `.env` > 用户 `.env`」快照，拒绝文件中的 bootstrap-only 变量，并在不替换继承值的前提下物化其余文件值 |
-| `installFailLoud(binName, proc?, release?)` | 将启动期或后续未处理的 Loader 拒绝转换为一行带标签的 stderr 消息并执行 `exit(1)`；两者之间会等待可选的 `release` 清理钩子（以 `FAIL_LOUD_RELEASE_TIMEOUT_MS` 为上限），使持有终端的界面能在退出前恢复终端；返回卸载函数 |
+| `installFailLoud(binName, proc?, release?, log?)` | 将启动期或后续未处理的 Loader 拒绝转换为一行带标签的 stderr 消息并执行 `exit(1)`；两者之间会等待可选的 `release` 清理钩子（以 `FAIL_LOUD_RELEASE_TIMEOUT_MS` 为上限），使持有终端的界面能在退出前恢复终端；可选的 `log` 接收器会在写入 stderr 之前同步收到同一行，即使后续 `release` 卡死，崩溃也已落盘；返回卸载函数 |
+| `installUncaughtCrashLog(binName, proc?, log?)` | 注册一个致命的 `uncaughtException` 处理器：Node 的默认行为是把堆栈打印到 stderr 并退出 1，因此本函数在保留该 fail-closed 行为的同时，先把同一行带标签的诊断交给可选的 `log` 接收器；返回卸载函数 |
+| `createCrashLog(homeDir)` | 创建一个尽力而为的同步崩溃日志接收器，把每次致命进程错误带时间戳地追加到 `$homeDir/logs/crash.log`（首次写入时创建 `logs/` 目录）；绝不抛出异常——日志无法写入时不得掩盖被报告的错误 |
+| `CRASH_LOG_FILENAME` | `createCrashLog` 在 Harness home 的 `logs/` 目录下追加写入的文件名 `'crash.log'` |
 | `FAIL_LOUD_RELEASE_TIMEOUT_MS` | `installFailLoud` 等待其 `release` 回调的时长；卡死的 disposer 只会延迟致命退出，而不会取消它 |
 | `assertEntriesLoaded(ctx, binName)` | 树结算后，如果其中存在已启用但没有 fiber 的条目，则抛出异常，并以 Cordis 启动故障的形式报告每个未解析插件的名称 |
 | `assertEntriesActivated(ctx, binName)` | 先执行 `assertEntriesLoaded` 检查，再在 Loader 结算后等待每个已启用配置项；抛出的错误包含每个失败插件的原始错误堆栈，或每个等待中插件尚未解析的服务 |

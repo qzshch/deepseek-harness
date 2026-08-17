@@ -7,13 +7,30 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import {
   addHarnessSourceSection, assertEntriesActivated, assertEntriesLoaded, boot,
+  CRASH_LOG_FILENAME, createCrashLog,
   FAIL_LOUD_RELEASE_TIMEOUT_MS, HARNESS_SOURCE_SECTION,
-  installFailLoud, loadEnv, loadLayeredEnv, loadOverlayPatches, resolveConfigPath, type FailLoudProcess,
+  installFailLoud, installUncaughtCrashLog, loadEnv, loadLayeredEnv, loadOverlayPatches, resolveConfigPath, type FailLoudProcess,
 } from '../src/index.ts'
 
 const NAME = 'dsh-test-bin'
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'dsh-app-boot-'))
+
+type FakeProc = FailLoudProcess & { handlers: Array<(err: unknown) => void>; written: string[]; exits: number[] }
+
+/** Shared process fake: records handlers, stderr lines, and exit codes. */
+function fakeProc(): FakeProc {
+  const handlers: Array<(err: unknown) => void> = []
+  const written: string[] = []
+  const exits: number[] = []
+  return {
+    handlers, written, exits,
+    on: (_event, handler) => { handlers.push(handler) },
+    off: (_event, handler) => { handlers.splice(handlers.indexOf(handler), 1) },
+    stderr: { write: (chunk: string) => { written.push(chunk) } },
+    exit: (code: number) => { exits.push(code) },
+  }
+}
 
 describe('resolveConfigPath', () => {
   it('resolves relative to the given cwd outside replay mode', () => {
@@ -272,19 +289,6 @@ describe('loadLayeredEnv', () => {
 })
 
 describe('installFailLoud', () => {
-  function fakeProc(): FailLoudProcess & { handlers: Array<(err: unknown) => void>; written: string[]; exits: number[] } {
-    const handlers: Array<(err: unknown) => void> = []
-    const written: string[] = []
-    const exits: number[] = []
-    return {
-      handlers, written, exits,
-      on: (_event, handler) => { handlers.push(handler) },
-      off: (_event, handler) => { handlers.splice(handlers.indexOf(handler), 1) },
-      stderr: { write: (chunk: string) => { written.push(chunk) } },
-      exit: (code: number) => { exits.push(code) },
-    }
-  }
-
   it('writes one labelled line with the stack and exits 1 on an Error rejection', () => {
     const proc = fakeProc()
     installFailLoud(NAME, proc)
@@ -411,6 +415,86 @@ describe('installFailLoud', () => {
     expect(proc.written[0]).toContain('first rejection')
     await vi.waitFor(() => { expect(proc.exits).toEqual([1]) })
     expect(released).toBe(true)
+  })
+
+  it('passes the diagnostic line to the crash-log sink before the stderr write', () => {
+    const proc = fakeProc()
+    const logged: string[] = []
+    installFailLoud(NAME, proc, undefined, (line) => { logged.push(line) })
+    const error = new Error('boom')
+    proc.handlers[0]!(error)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toContain(`${NAME}: fatal load failure: `)
+    expect(logged[0]).toContain(error.stack)
+    // The sink runs first, synchronously, so a hang in the release hook (or a
+    // lost stderr) cannot swallow the recorded reason.
+    expect(proc.written[0]).toBe(logged[0])
+    expect(proc.exits).toEqual([1])
+  })
+})
+
+describe('createCrashLog', () => {
+  it('appends a timestamped line under the home logs directory, creating it on demand', () => {
+    const home = tmp()
+    const log = createCrashLog(home)
+    log('first line\n')
+    log('second line\n')
+    const path = join(home, 'logs', CRASH_LOG_FILENAME)
+    const content = readFileSync(path, 'utf8')
+    const [first, second] = content.split('\n')
+    expect(first).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z first line$/)
+    expect(second).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z second line$/)
+  })
+
+  it('never throws when the log cannot be written', () => {
+    // A file where the logs directory is expected blocks mkdirSync.
+    const home = tmp()
+    writeFileSync(join(home, 'logs'), 'not a directory')
+    const log = createCrashLog(home)
+    expect(() => { log('unwritable\n') }).not.toThrow()
+  })
+})
+
+describe('installUncaughtCrashLog', () => {
+  it('writes a labelled stack line, records it through the crash log, and exits 1', () => {
+    const proc = fakeProc()
+    const logged: string[] = []
+    installUncaughtCrashLog(NAME, proc, (line) => { logged.push(line) })
+    const error = new Error('boom')
+    proc.handlers[0]!(error)
+    expect(proc.written[0]).toContain(`${NAME}: fatal uncaught exception: `)
+    expect(proc.written[0]).toContain(error.stack)
+    expect(logged[0]).toBe(proc.written[0])
+    expect(proc.exits).toEqual([1])
+  })
+
+  it('stringifies a non-Error exception and falls back to the message without a stack', () => {
+    const plain = fakeProc()
+    installUncaughtCrashLog(NAME, plain)
+    plain.handlers[0]!('plain failure')
+    expect(plain.written[0]).toContain('plain failure')
+    expect(plain.exits).toEqual([1])
+
+    const stackless = new Error('no stack')
+    delete (stackless as { stack?: string }).stack
+    const bare = fakeProc()
+    installUncaughtCrashLog(NAME, bare)
+    bare.handlers[0]!(stackless)
+    expect(bare.written[0]).toContain('no stack')
+    expect(bare.exits).toEqual([1])
+  })
+
+  it('returns an uninstaller that removes the handler (and defaults to the real process)', () => {
+    const proc = fakeProc()
+    const uninstall = installUncaughtCrashLog(NAME, proc)
+    expect(proc.handlers).toHaveLength(1)
+    uninstall()
+    expect(proc.handlers).toHaveLength(0)
+    const before = process.listenerCount('uncaughtException')
+    const uninstallReal = installUncaughtCrashLog(NAME)
+    expect(process.listenerCount('uncaughtException')).toBe(before + 1)
+    uninstallReal()
+    expect(process.listenerCount('uncaughtException')).toBe(before)
   })
 })
 

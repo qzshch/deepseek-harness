@@ -7,9 +7,9 @@
  */
 
 import { pathToFileURL } from 'node:url'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'
-import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import * as yaml from 'js-yaml'
 import { Context, type FiberState } from '@deepseek-ai/cordis'
 import Loader, { type Entry, type EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
@@ -529,12 +529,13 @@ export async function mountRootInclude(
 }
 
 /**
- * The slice of `process` {@link installFailLoud} needs — injectable so tests
- * exercise the handler without registering on (or exiting) the real process.
+ * The slice of `process` {@link installFailLoud} and
+ * {@link installUncaughtCrashLog} need — injectable so tests exercise the
+ * handlers without registering on (or exiting) the real process.
  */
 export interface FailLoudProcess {
-  on(event: 'unhandledRejection', handler: (err: unknown) => void): unknown
-  off(event: 'unhandledRejection', handler: (err: unknown) => void): unknown
+  on(event: 'unhandledRejection' | 'uncaughtException', handler: (err: unknown) => void): unknown
+  off(event: 'unhandledRejection' | 'uncaughtException', handler: (err: unknown) => void): unknown
   stderr: { write(chunk: string): unknown }
   /**
    * Terminate the process. Callers treat this as the end of the run, as
@@ -577,6 +578,31 @@ async function observeLoaderRejectionCheckpoint(reasons: readonly unknown[]): Pr
  */
 export const FAIL_LOUD_RELEASE_TIMEOUT_MS = 2_000
 
+/** The crash-log file name under the Harness home's `logs/` directory. */
+export const CRASH_LOG_FILENAME = 'crash.log'
+
+/**
+ * Create a synchronous crash-log sink appending one line per fatal process
+ * error to `$homeDir/logs/crash.log`, each prefixed with an ISO timestamp.
+ * The sink never throws: a crash that cannot be recorded must not mask the
+ * error being reported. A missing `logs/` directory is created on first write.
+ * @param homeDir - the Harness home directory (see `resolveDshHome`).
+ * @returns a line sink for {@link installFailLoud} and {@link installUncaughtCrashLog}.
+ */
+export function createCrashLog(homeDir: string): (line: string) => void {
+  const path = join(homeDir, 'logs', CRASH_LOG_FILENAME)
+  return (line: string): void => {
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      appendFileSync(path, `${new Date().toISOString()} ${line}`, 'utf8')
+    } catch {
+      // The process is already failing fatally; a full disk, ACL, or other
+      // write failure must not replace the reported error with one about the
+      // log itself, so recording is best-effort and silent.
+    }
+  }
+}
+
 /**
  * Install before boot to turn a late unhandled plugin-init rejection into one
  * labelled stderr diagnostic and `exit(1)`. A rejection already included by
@@ -604,12 +630,16 @@ export const FAIL_LOUD_RELEASE_TIMEOUT_MS = 2_000
  * @param release - optional teardown awaited before exit, used by a
  *   terminal-owning surface to restore the terminal. Its own failure is
  *   swallowed because the pending fatal exit already owns the outcome.
+ * @param log - optional crash-log sink (see {@link createCrashLog}) called with
+ *   the same diagnostic line, synchronously, before the stderr write and exit;
+ *   a crash must be recorded even when the release later hangs.
  * @returns the uninstaller that removes the rejection handler.
  */
 export function installFailLoud(
   binName: string,
   proc: FailLoudProcess = process,
   release?: () => Promise<void> | void,
+  log?: (line: string) => void,
 ): () => void {
   let exiting = false
   const handler = (err: unknown): void => {
@@ -619,7 +649,9 @@ export function installFailLoud(
     // real one or letting Node kill the process before the terminal is back.
     if (exiting) return
     exiting = true
-    proc.stderr.write(`${binName}: fatal load failure: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`)
+    const line = `${binName}: fatal load failure: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`
+    log?.(line)
+    proc.stderr.write(line)
     if (release === undefined) {
       proc.exit(1)
       return
@@ -646,6 +678,35 @@ export function installFailLoud(
   const uninstall = (): void => void proc.off('unhandledRejection', handler)
   proc.on('unhandledRejection', handler)
   return uninstall
+}
+
+/**
+ * Install a fatal handler for `uncaughtException`: Node's default would print
+ * the stack to stderr and exit 1, but with no way to persist it. This installs
+ * the same labelled diagnostic through `stderr` and the optional crash-log sink
+ * before `exit(1)`, keeping the default fail-closed behavior while recording
+ * the crash on disk for later diagnosis. Install after {@link installFailLoud}
+ * so the rejection handler stays the single owner of the terminal release; the
+ * returned function removes the exception handler.
+ * @param binName - the diagnostic prefix on the fatal-failure line.
+ * @param proc - the process slice to register on; tests inject a fake.
+ * @param log - optional crash-log sink (see {@link createCrashLog}) called with
+ *   the same diagnostic line, synchronously, before the stderr write and exit.
+ * @returns the uninstaller that removes the exception handler.
+ */
+export function installUncaughtCrashLog(
+  binName: string,
+  proc: FailLoudProcess = process,
+  log?: (line: string) => void,
+): () => void {
+  const handler = (err: unknown): void => {
+    const line = `${binName}: fatal uncaught exception: ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`
+    log?.(line)
+    proc.stderr.write(line)
+    proc.exit(1)
+  }
+  proc.on('uncaughtException', handler)
+  return () => void proc.off('uncaughtException', handler)
 }
 
 /**
