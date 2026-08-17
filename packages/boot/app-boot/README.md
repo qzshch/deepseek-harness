@@ -64,6 +64,8 @@ Startup failure is a single labelled line plus a nonzero exit — never a silent
 
 If your app owns the terminal, it can hand the terminal back before the process exits, so your shell is never left in raw mode. The handoff is bounded: a stuck cleanup delays the fatal exit but never cancels it.
 
+A fatal process error is also appended as one timestamped line to the crash log under the Harness home (`logs/crash.log`), so the reason survives even when the launching shell captured no stderr — a hidden process, a `.bat` file, or a scheduled task. The write is best-effort and synchronous: a log that cannot be written never masks or delays the reported error.
+
 ### Telling the agent where the harness lives
 
 When your app boots a model-backed agent, you can tell the agent where the DSH implementation checkout lives: it learns that path and that it must not infer the working directory from it — it should use `pwd`. The instruction appears once near the top of the system prompt. Apps without a system prompt service skip it; in development, reloading the system prompt drops it until the next boot.
@@ -88,13 +90,13 @@ This section explains how the outcomes above are realized and points at the code
 
 ### Helper behavior
 
-The exports each own one stage of the boot: config resolution and snapshot replay, layered environment loading, fail-loud reporting, activation auditing, patch parsing, root-include mounting, config dump rendering, live patch watching, profile composition, and the harness-source section. Per-export contracts live in the code, not this README — see [`src/index.ts`](src/index.ts) and [`src/profile.ts`](src/profile.ts).
+The exports each own one stage of the boot: config resolution and snapshot replay, layered environment loading, fail-loud reporting and crash-log persistence, activation auditing, patch parsing, root-include mounting, config dump rendering, live patch watching, profile composition, and the harness-source section. Per-export contracts live in the code, not this README — see [`src/index.ts`](src/index.ts) and [`src/profile.ts`](src/profile.ts).
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Boot helpers: config resolution, environment loading, fail-loud guard, activation audit, patch parsing, config dump, harness-source section |
+| [`src/index.ts`](src/index.ts) | Boot helpers: config resolution, environment loading, fail-loud guard and crash-log sink, activation audit, patch parsing, config dump, harness-source section |
 | [`src/profile.ts`](src/profile.ts) | Profile discovery, initialization, bundle resolution, module fallback |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion (no runtime invariant; boundary and replay tests cover the protocol mapping) |
 

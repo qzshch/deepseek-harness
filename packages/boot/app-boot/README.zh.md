@@ -64,6 +64,8 @@ profile 是同一套 dsh 安装提供不同应用界面的方式：`web`、`head
 
 如果你的应用持有终端，它可以在进程退出前把终端交还，你的 shell 绝不会残留在 raw 模式。交还过程有界：卡住的清理只会延迟致命退出，而不会取消它。
 
+致命进程错误还会以一行带时间戳的记录追加到 Harness home 下的崩溃日志（`logs/crash.log`），即使启动 shell 没有捕获 stderr——隐藏进程、`.bat` 文件或计划任务——原因也能留痕。写入是尽力而为且同步的：日志无法写入时绝不掩盖或延迟所报告的错误。
+
 ### 告诉 agent harness 所在位置
 
 当你的应用启动模型驱动的 agent 时，你可以告诉 agent DSH 实现代码 checkout 的位置：它得知该路径，也知道不得据此推断工作目录——它应使用 `pwd`。这条指示在系统提示词靠前位置出现一次。没有系统提示词服务的应用会跳过；开发环境中，重新加载系统提示词后它会消失，直至下次启动。
@@ -88,13 +90,13 @@ profile 是同一套 dsh 安装提供不同应用界面的方式：`web`、`head
 
 ### Helper 行为
 
-每个导出各负责启动的一个阶段：配置解析与快照回放、分层环境加载、明确报错的保护机制、激活审计、patch 解析、根 include 挂载、配置 dump 渲染、活动 patch 监视、profile 组合，以及 harness 源码段落。各导出的约定在代码中，不在本 README——见 [`src/index.ts`](src/index.ts) 与 [`src/profile.ts`](src/profile.ts)。
+每个导出各负责启动的一个阶段：配置解析与快照回放、分层环境加载、明确报错的保护机制与崩溃日志落盘、激活审计、patch 解析、根 include 挂载、配置 dump 渲染、活动 patch 监视、profile 组合，以及 harness 源码段落。各导出的约定在代码中，不在本 README——见 [`src/index.ts`](src/index.ts) 与 [`src/profile.ts`](src/profile.ts)。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 启动 helper：配置解析、环境加载、会明确报错的保护机制、激活审计、patch 解析、配置 dump、harness 源码段落 |
+| [`src/index.ts`](src/index.ts) | 启动 helper：配置解析、环境加载、会明确报错的保护机制与崩溃日志接收器、激活审计、patch 解析、配置 dump、harness 源码段落 |
 | [`src/profile.ts`](src/profile.ts) | profile 发现、初始化、组合包解析、模块后备机制 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；边界与回放测试覆盖其协议映射） |
 

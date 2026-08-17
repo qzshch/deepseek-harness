@@ -20,8 +20,10 @@ import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import {
   boot,
   composeEntries,
+  createCrashLog,
   healProfilesModuleFallback,
   installFailLoud,
+  installUncaughtCrashLog,
   loadOptionalPatches,
   loadOverlayPatches,
   loadProfile,
@@ -223,9 +225,15 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
   // complete; SIGINT is a user interrupt and reports 130.
   process.on('SIGTERM', () => { interrupt(0) })
   process.on('SIGINT', () => { interrupt(130) })
+  // Fatal process errors are recorded under the Harness home's logs/ so a
+  // crash that kills a long-lived surface (e.g. the web server) leaves a
+  // durable stack even when stderr was never captured. Fail-closed behavior
+  // is unchanged: unhandled rejections and uncaught exceptions still exit 1.
+  const crashLog = createCrashLog(resolveDshHome())
   installFailLoud(NAME, process, async () => {
     await app.current?.fiber.dispose()
-  })
+  }, crashLog)
+  installUncaughtCrashLog(NAME, process, crashLog)
 
   const rootConfig = join(composed.profile.dir, PROFILE_ROOT_FILENAME)
   // Recomposition for the live user layers: bundle layers below, overlays
