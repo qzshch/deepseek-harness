@@ -1,4 +1,4 @@
-/** Welcome-notice state, durable when the browser may use Host settings. */
+/** Welcome-notice state, durable through the Host settings plane. */
 
 import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
@@ -24,7 +24,7 @@ function acknowledgementOf(view: SettingsNamespaceView): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-/** Coordinates durable Host acknowledgement or a process-local remote fallback. */
+/** Coordinates durable Host acknowledgement. */
 export class WelcomeNoticeStore {
   /** uSES-safe state source shared by the registered welcome step. */
   readonly store: SnapshotStore<WelcomeNoticeState> = createSnapshotStore({
@@ -35,20 +35,12 @@ export class WelcomeNoticeStore {
 
   /**
    * @param api - settings wire face used for durable reads and writes.
-   * @param persistence - remote browsers use memory because settings is loopback-only.
    */
-  constructor(
-    private readonly api: Pick<IApiClient, 'settings'>,
-    private readonly persistence: 'host' | 'memory' = 'host',
-  ) {}
+  constructor(private readonly api: Pick<IApiClient, 'settings'>) {}
 
-  /** Load the acknowledgement from Host settings or initialize process-local state. */
+  /** Load the acknowledgement from Host settings. */
   async load(): Promise<void> {
     const generation = ++this.generation
-    if (this.persistence === 'memory') {
-      this.store.update((state) => { state.status = 'ready'; state.error = null })
-      return
-    }
     this.store.update((state) => { state.status = 'loading'; state.error = null })
     try {
       const response = await this.api.settings.describe({})
@@ -74,19 +66,11 @@ export class WelcomeNoticeStore {
   }
 
   /**
-   * Persist this copy version, or advance only this process for a remote browser.
-   * @returns true when the selected persistence mode accepted the acknowledgement.
+   * Persist this copy version through the Host settings plane.
+   * @returns true when the Host accepted the acknowledgement.
    */
   async acknowledge(): Promise<boolean> {
     const generation = ++this.generation
-    if (this.persistence === 'memory') {
-      this.store.update((state) => {
-        state.status = 'ready'
-        state.acknowledged = true
-        state.error = null
-      })
-      return true
-    }
     this.store.update((state) => { state.status = 'saving'; state.error = null })
     try {
       const response = await this.api.settings.mutate({
@@ -116,8 +100,8 @@ export class WelcomeNoticeStore {
 }
 
 /**
- * Refresh only after welcome state has left idle. A memory-mode load retains
- * acknowledgement so reconnect does not reopen a process-local notice.
+ * Refresh only after welcome state has left idle: a reconnect refetches the
+ * durable acknowledgement.
  * @param controller - welcome state owner whose current status decides whether to load.
  */
 export function refreshWelcomeIfLoaded(controller: WelcomeNoticeStore): void {

@@ -49,21 +49,18 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
   /**
    * @param api - settings wire face.
    * @param spec - namespace identity and optional narrowing decoder.
-   * @param persistence - remote browsers remain process-local because settings RPCs are loopback-only.
    */
   constructor(
     private readonly api: SettingsFace,
     private readonly spec: SettingsScopeSpec<T>,
-    private readonly persistence: 'host' | 'memory' = 'host',
   ) {
     this.store = createSnapshotStore<SettingsScopeSnapshot<T>>({
-      status: persistence === 'host' ? 'loading' : 'unavailable',
+      status: 'loading',
       value: undefined,
       base: undefined,
       user: undefined,
       revision: undefined,
       writable: false,
-      mode: persistence,
     })
   }
 
@@ -147,7 +144,7 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
-    if (this.persistence === 'memory' || this.disposed) return Promise.resolve()
+    if (this.disposed) return Promise.resolve()
     const task = this.tail.then(async () => {
       if (this.disposed) return
       await operation()
@@ -163,9 +160,14 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
     try {
       response = await this.api.settings.describe({})
     } catch (_settingsReadFailure) {
+      this.convergeDeniedRead()
       return
     }
-    if (!response.result.ok || this.disposed) return
+    if (!response.result.ok) {
+      this.convergeDeniedRead()
+      return
+    }
+    if (this.disposed) return
     const { namespaces, writable } = response.result.value
     const view = namespaces.find(candidate => candidate.ns === this.spec.namespace)
     const publish = generation === this.readGeneration
@@ -179,6 +181,19 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
       return
     }
     this.accept(view, publish, writable)
+  }
+
+  /**
+   * A transport failure or a Host rejection leaves a never-loaded scope
+   * (still `loading`) terminal: `unavailable`, its feature rows inert. A
+   * scope that already holds a view keeps it — a refused refresh is not a
+   * loss of the last good state.
+   */
+  private convergeDeniedRead(): void {
+    if (this.disposed) return
+    if (this.getSnapshot().status === 'loading') {
+      this.store.update((draft) => { draft.status = 'unavailable' })
+    }
   }
 
   private accept(view: SettingsNamespaceView, publish: boolean, writable?: boolean): void {
@@ -248,7 +263,6 @@ export class SettingsScopeBinder extends Service {
     const controller = new SettingsScopeController<T>(
       connection.api,
       spec,
-      connection.isLoopback ? 'host' : 'memory',
     )
     ctx.effect(() => {
       const refresh = (namespace?: string): void => {

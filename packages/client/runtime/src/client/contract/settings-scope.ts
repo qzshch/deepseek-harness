@@ -11,8 +11,7 @@
 export interface SettingsScopeSnapshot<T> {
   /**
    * `loading` until the first accepted section, `ready` while one stands, and
-   * `unavailable` when the namespace is not exposed to this client or the
-   * connection keeps preferences process-local (memory mode).
+   * `unavailable` when the namespace is not exposed or the read is refused.
    */
   status: 'loading' | 'ready' | 'unavailable'
   /** Last accepted schema-resolved section; undefined before the first acceptance. */
@@ -30,10 +29,8 @@ export interface SettingsScopeSnapshot<T> {
   user: unknown
   /** Namespace revision fencing the next write; undefined before the first Host view. */
   revision: number | undefined
-  /** Whether the Host document accepts writes; memory mode never does. */
+  /** Whether the Host document accepts writes. */
   writable: boolean
-  /** `host` syncs with the Host document; `memory` keeps a remote browser process-local. */
-  mode: 'host' | 'memory'
 }
 
 /** Domain-owned description of one settings namespace consumed by a browser plugin. */

@@ -85,9 +85,10 @@ export interface HostApi {
 
   /**
    * Open a filesystem path with the operating system's default application
-   * (Finder / Explorer / xdg-open hand-off). The browser carrier's
-   * prefix-wide trust fence covers this privileged method like every other
-   * `/api` request.
+   * (Finder / Explorer / xdg-open hand-off). A remote browser's click cannot
+   * reach that desktop, so the method is loopback-pinned (see
+   * `dsh-client-connection`); the prefix-wide trust fence applies to it like
+   * every other `/api` request.
    */
   openPath(
     request: RpcRequest<{ path: string }>,

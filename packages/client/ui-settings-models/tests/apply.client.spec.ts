@@ -14,7 +14,7 @@ import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
 // the shipped Chinese copy, so they state the browser they assume.
 usePinnedBrowserLanguages('zh-CN')
 
-async function bench(isLoopback = true) {
+async function bench(isLoopback = true, api: object = {}) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
@@ -24,7 +24,7 @@ async function bench(isLoopback = true) {
   new TestRemote(ctx)
   // The apply path only captures the wire face; no call leaves this fake
   // until a section actually loads.
-  ctx.provide('connection', { api: {}, isLoopback } as never)
+  ctx.provide('connection', { api, isLoopback } as never)
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale }
 }
 
@@ -143,8 +143,12 @@ describe('ui-settings-models apply', () => {
     expect(() => b.locale.register('settings.models', 'en', {})).not.toThrow()
   })
 
-  it('keeps remote-browser acknowledgement in process memory', async () => {
-    const b = await bench(false)
+  it('routes a remote browser’s welcome read through the wire', async () => {
+    const describe = vi.fn(() => Promise.resolve({
+      rpcId: 'welcome-remote' as never,
+      result: { ok: true, value: { writable: true, hasDocument: false, namespaces: [] } },
+    }))
+    const b = await bench(false, { settings: { describe } })
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
@@ -154,8 +158,11 @@ describe('ui-settings-models apply', () => {
     )()
 
     await injected.controller.load()
+    // The remote browser crosses the wire: an absent namespace converges to
+    // the error state instead of a process-local ready.
+    expect(describe).toHaveBeenCalledOnce()
     expect(injected.controller.store.getSnapshot()).toEqual({
-      status: 'ready', acknowledged: false, error: null,
+      status: 'error', acknowledged: false, error: 'welcome acknowledgement settings are unavailable',
     })
   })
 })

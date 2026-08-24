@@ -70,11 +70,11 @@ describe('SettingsScopeController', () => {
       { namespace: 'ui-test' },
     )
     expect(scope.getSnapshot()).toEqual({
-      status: 'loading', value: undefined, revision: undefined, writable: false, mode: 'host',
+      status: 'loading', value: undefined, revision: undefined, writable: false,
     })
     await scope.load()
     expect(scope.getSnapshot()).toEqual({
-      status: 'ready', value: { preference: 'dark' }, revision: 3, writable: true, mode: 'host',
+      status: 'ready', value: { preference: 'dark' }, revision: 3, writable: true,
     })
   })
 
@@ -276,22 +276,32 @@ describe('SettingsScopeController', () => {
     expect(published).toEqual([undefined])
   })
 
-  it('keeps a remote browser in memory mode without Host calls', async () => {
+  it('converges a refused first read to unavailable and recovers on a later read', async () => {
     const describeCall = vi.fn()
-    const mutate = vi.fn()
+      .mockRejectedValueOnce(new Error('transport failure for /api/settings.describe: HTTP 403'))
+      .mockResolvedValueOnce(described({ preference: 'light' }, 1))
     const scope = new SettingsScopeController<UiTestSettings>(
-      { settings: { describe: describeCall, mutate } } as never,
+      { settings: { describe: describeCall } } as never,
       { namespace: 'ui-test' },
-      'memory',
     )
-    expect(scope.getSnapshot()).toEqual({
-      status: 'unavailable', value: undefined, revision: undefined, writable: false, mode: 'memory',
+    await scope.load()
+    expect(scope.getSnapshot()).toMatchObject({
+      status: 'unavailable', value: undefined, revision: undefined, writable: false,
     })
     await scope.load()
-    await scope.set('preference', 'dark')
-    await scope.dispose()
-    expect(describeCall).not.toHaveBeenCalled()
-    expect(mutate).not.toHaveBeenCalled()
+    expect(scope.getSnapshot()).toMatchObject({
+      status: 'ready', value: { preference: 'light' }, revision: 1, writable: true,
+    })
+  })
+
+  it('converges a business-rejected first read to unavailable', async () => {
+    const describeCall = vi.fn().mockResolvedValueOnce(rejected())
+    const scope = new SettingsScopeController<UiTestSettings>(
+      { settings: { describe: describeCall } } as never,
+      { namespace: 'ui-test' },
+    )
+    await scope.load()
+    expect(scope.getSnapshot()).toMatchObject({ status: 'unavailable', writable: false })
   })
 
   it('carries the composition base and the user layer into the snapshot', async () => {
@@ -402,8 +412,9 @@ describe('SettingsScopeBinder.bind', () => {
     expect(describeCall).toHaveBeenCalledTimes(3)
   })
 
-  it('binds a remote browser in memory mode without starting a settings read', async () => {
+  it('binds a remote browser to the wire and converges a refused read to unavailable', async () => {
     const describeCall = vi.fn()
+      .mockRejectedValueOnce(new Error('transport failure for /api/settings.describe: HTTP 403'))
     const ctx = new Context()
     ctx.provide('connection', {
       api: { settings: { describe: describeCall } },
@@ -419,8 +430,10 @@ describe('SettingsScopeBinder.bind', () => {
       },
     })
     await fiber.await()
-    expect(scope.getSnapshot()).toMatchObject({ status: 'unavailable', mode: 'memory', writable: false })
+    await vi.waitFor(() => {
+      expect(scope.getSnapshot()).toMatchObject({ status: 'unavailable', writable: false })
+    })
+    expect(describeCall).toHaveBeenCalledOnce()
     await fiber.dispose()
-    expect(describeCall).not.toHaveBeenCalled()
   })
 })

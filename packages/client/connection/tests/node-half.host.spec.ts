@@ -161,21 +161,18 @@ describe('connection node half', () => {
     await dispose()
   })
 
-  it('pins privileged methods to loopback even for a declared trusted authority', async () => {
+  it('pins desktop, probe, and roster methods to loopback even for a declared trusted authority', async () => {
     const { routes, dispose } = await mounted({ trustedHosts: ['harness.example'] })
-    // The privileged set: native dialogs plus the whole settings/credential
-    // configuration plane, reads included, plus the one method that makes the
-    // host fetch a caller-chosen URL. The same declared authority reaches
-    // ordinary reads (carrier-level 404 from the empty proxy proves the fence
-    // passed), but each privileged method stays loopback-only and 403s.
+    // The loopback-only set: native dialogs and settings.openDocument act on
+    // the host desktop, discoverModels makes the host fetch a caller-chosen
+    // URL, and the agent-preset roster is reconnaissance and roster
+    // management. The same declared authority reaches ordinary reads
+    // (carrier-level 404 from the empty proxy proves the fence passed), but
+    // each pinned method stays loopback-only and 403s.
     for (const method of [
       'host.pickDirectory', 'host.openPath',
-      'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
-      'credentials.describe', 'credentials.set', 'credentials.unset',
+      'settings.openDocument',
       'llm.discoverModels',
-      // A composition names the plugins a session runs: reading one is
-      // reconnaissance, and copy/remove/openDocument manage the roster and
-      // drive the host desktop.
       'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
     ]) {
       const denied = fakeResponse()
@@ -189,6 +186,33 @@ describe('connection node half', () => {
     const read = fakeResponse()
     await routes[0]!.handler(fakeRequest({ host: 'harness.example' }), read.response)
     expect(read.state.status).not.toBe(403)
+    await dispose()
+  })
+
+  it('lets the settings data and credential planes ride the trust fence', async () => {
+    const { routes, dispose } = await mounted({ trustedHosts: ['harness.example'] })
+    // A declared trusted authority reads and writes the configuration and
+    // credential store through the fence: the carrier answers 404 for a GET
+    // unary path — proof the bridge ran — while the same request from an
+    // untrusted Host is refused before the bridge runs.
+    for (const method of [
+      'settings.describe', 'settings.update', 'settings.replace', 'settings.mutate',
+      'credentials.describe', 'credentials.set', 'credentials.unset',
+    ]) {
+      const pass = fakeResponse()
+      await routes[0]!.handler(
+        fakeRequest({ host: 'harness.example' }, `${API_PATH}/${method}`),
+        pass.response,
+      )
+      expect(pass.state.status).toBe(404)
+      const denied = fakeResponse()
+      await routes[0]!.handler(
+        fakeRequest({ host: 'other.example' }, `${API_PATH}/${method}`),
+        denied.response,
+      )
+      expect(denied.state.status).toBe(403)
+      expect(denied.state.body).toBe('forbidden')
+    }
     await dispose()
   })
 
@@ -453,7 +477,7 @@ describe('connection node half over a real HTTP server', () => {
     })
   }
 
-  it('answers a declared LAN authority with 403 on every configuration method, over real HTTP', async () => {
+  it('answers a declared LAN authority with 403 on the loopback-pinned methods, over real HTTP', async () => {
     // The fence's input is a real IncomingMessage parsed by Node from the
     // wire, not a hand-assembled object: the Host header a LAN browser sends
     // is exactly what decides loopback-only here, so the boundary is asserted
@@ -461,11 +485,11 @@ describe('connection node half over a real HTTP server', () => {
     const { routes, dispose } = await mounted({ trustedHosts: ['harness.example'] })
     const { port, close } = await serve(routes)
     try {
-      // Reads are as privileged as writes: describe returns the exposed
-      // configuration, and credentials.describe probes arbitrary env-var names.
+      // The pinned methods act on the Host desktop or carry a draft credential:
+      // a trusted LAN caller passes the outer fence but still must not reach
+      // them (403 is the pin's answer, after the fence).
       for (const method of [
-        'settings.describe', 'settings.openDocument', 'settings.update', 'settings.replace', 'settings.mutate',
-        'credentials.describe', 'credentials.set', 'credentials.unset',
+        'settings.openDocument',
         'host.pickDirectory', 'host.openPath',
         // Carries a draft credential and turns the host into a fetcher for a
         // URL the caller picked: an anonymous LAN caller must not reach it.
@@ -473,6 +497,15 @@ describe('connection node half over a real HTTP server', () => {
         'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
       ]) {
         expect([method, await call(port, method, 'harness.example')]).toEqual([method, 403])
+      }
+      // The settings data and credential planes ride the fence like every
+      // other method: the same trusted authority reaches them (404 is the
+      // empty proxy's carrier answer — the fence passed).
+      for (const method of [
+        'settings.describe', 'settings.update', 'settings.replace', 'settings.mutate',
+        'credentials.describe', 'credentials.set', 'credentials.unset',
+      ]) {
+        expect([method, await call(port, method, 'harness.example')]).toEqual([method, 404])
       }
       // The model catalog stays reachable for the same authority: a LAN
       // client's model picker needs it, and it carries no key or endpoint
@@ -487,6 +520,10 @@ describe('connection node half over a real HTTP server', () => {
       }
       // Loopback reaches everything, configuration included.
       expect(await call(port, 'settings.describe', `127.0.0.1:${String(port)}`)).toBe(404)
+      // An authority the deployment never declared stays refused on every
+      // method, pinned or not.
+      expect(await call(port, 'settings.describe', 'other.example')).toBe(403)
+      expect(await call(port, 'host.openPath', 'other.example')).toBe(403)
     } finally {
       await close()
       await dispose()

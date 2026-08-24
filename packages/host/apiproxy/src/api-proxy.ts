@@ -3132,10 +3132,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
       },
 
-      // Authoring is privileged (see PRIVILEGED_METHODS in dsh-client-connection):
-      // a composition names the plugins a session runs, so reading one is
-      // reconnaissance, and copy/remove/openDocument manage the roster and
-      // drive the host desktop.
+      // Authoring is loopback-pinned (see LOOPBACK_ONLY_METHODS in
+      // dsh-client-connection): a composition names the plugins a session
+      // runs, so reading one is reconnaissance, and copy/remove/openDocument
+      // manage the roster and drive the host desktop.
       async read(request) {
         const { agentPreset } = request.payload
         const presets = ctx.get('agentPresets')
