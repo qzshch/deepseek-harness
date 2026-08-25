@@ -5,6 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { gzipSync } from 'node:zlib'
 import type { ConnectionFetchHandler } from './rpc.ts'
 
 /** Default carrier cap for all HTTP RPC bodies: sized for the default
@@ -12,6 +13,22 @@ import type { ConnectionFetchHandler } from './rpc.ts'
  * headroom (~267.7 MiB required), rounded up for slack. The bridge buffers
  * each body in memory, so this cap is also the per-request resident bound. */
 export const DEFAULT_MAX_REQUEST_BODY_BYTES = 300 * 1024 * 1024
+
+/** Response bodies at least this large are gzip-compressed for gzip clients
+ * (tiny RPC answers would cost more CPU than they save on the wire). */
+export const GZIP_MIN_BYTES = 1024
+
+/** Whether the request's Accept-Encoding advertises gzip. */
+function acceptsGzip(req: IncomingMessage): boolean {
+  const value = req.headers['accept-encoding']
+  return typeof value === 'string' && /\bgzip\b/i.test(value)
+}
+
+/** Append one token to an existing Vary header value, deduplicated. */
+function mergeVary(existing: string | null, token: string): string {
+  if (existing === null || existing === '') return token
+  return existing.split(',').map(part => part.trim()).includes(token) ? existing : `${existing}, ${token}`
+}
 
 /**
  * Bridge one node:http request to the fetch-shaped handler (client close
@@ -82,8 +99,30 @@ export async function bridge(
   }
   const response = await apiHandler.fetch(request)
   const requestUnread = bodyMode === 'streaming' && !req.readableEnded
-  const responseHeaders = Object.fromEntries(response.headers.entries())
-  res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
+  const responseHeaders = new Headers(response.headers)
+  if (acceptsGzip(req) && response.body !== null) {
+    // Gzip-capable clients pay one full buffering pass so the (already fully
+    // realized JSON) RPC body can be compressed before hitting the wire; the
+    // /api carrier serves complete envelopes, not HTTP streams, so buffering
+    // never delays a progressive response here.
+    const chunks: Buffer[] = []
+    for await (const chunk of response.body) chunks.push(chunk as Buffer)
+    const raw = Buffer.concat(chunks)
+    const compressed = raw.length >= GZIP_MIN_BYTES ? gzipSync(raw) : null
+    if (compressed !== null && compressed.length < raw.length) {
+      responseHeaders.delete('content-length')
+      responseHeaders.set('content-encoding', 'gzip')
+      responseHeaders.set('content-length', String(compressed.length))
+      responseHeaders.set('vary', mergeVary(responseHeaders.get('vary'), 'Accept-Encoding'))
+    }
+    const headerRecord = Object.fromEntries(responseHeaders.entries())
+    res.writeHead(response.status, requestUnread ? { ...headerRecord, connection: 'close' } : headerRecord)
+    res.end(compressed ?? raw)
+    if (requestUnread) req.destroy()
+    return
+  }
+  const responseHeaderRecord = Object.fromEntries(responseHeaders.entries())
+  res.writeHead(response.status, requestUnread ? { ...responseHeaderRecord, connection: 'close' } : responseHeaderRecord)
   if (response.body === null) {
     res.end()
     if (requestUnread) req.destroy()

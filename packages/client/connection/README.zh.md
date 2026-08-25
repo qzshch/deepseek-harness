@@ -16,6 +16,7 @@ kind: "package-reference"
 - [使用本包](#use-this-package)
 - [浏览器认证与请求信任](#browser-authentication-and-request-trust)
 - [Connection generation](#connection-generation)
+- [`/api` 响应压缩](#api-response-compression)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
@@ -53,6 +54,10 @@ API Gateway Client 把内部 `$events` 逻辑流注册为唯一 generation sourc
 
 可通过 Host Connection 行的 `config.recovery` 覆盖重试上限、增长因子或握手告警与取消时间；[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-client-connection)列出接受的字段。Host 校验这些值，并将其注入所提供的每个页面。Client 在提供 Connection 前校验启动数据，并在 Gateway 启动循环时采用这些默认值；显式传给 `start()` 的时序覆盖优先。增长因子必须是至少为一的有限数。若就绪、失败、取消或硬期限先于告警发生，该告警会被取消。修改 Host 恢复配置后需重新加载页面。
 
+
+## `/api` 响应压缩
+
+桥会对声明 `Accept-Encoding: gzip` 的客户端把完整 JSON 信封做 gzip 压缩：体积至少 1 KiB 且确有收缩时经 `gzipSync` 压缩，响应随后携带 `Content-Encoding: gzip`、修正后的 `Content-Length` 与 `Vary: Accept-Encoding`。非 gzip 客户端、小体积与不可压缩负载保持流式写出路径。缓冲是安全的，因为载体只提供完整信封而非 HTTP 流；两个事件通道是 WebSocket，从不经过此桥。这使得大体量 unary 响应（数百会话的会话列表）在低带宽隧道下仍可及时送达。
 
 <a id="model-experience"></a>
 ## 模型体验
