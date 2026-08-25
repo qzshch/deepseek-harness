@@ -16,6 +16,7 @@ kind: "package-reference"
 - [使用本包](#use-this-package)
 - [浏览器认证与请求信任](#browser-authentication-and-request-trust)
 - [Connection generation](#connection-generation)
+- [`/api` 响应压缩](#api-response-compression)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
@@ -44,6 +45,10 @@ cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-sessi
 API Gateway Client 把内部 `$events` logical stream 注册为唯一 generation source，与有无 `$on` 订阅无关。Host 在 API Remotes source factory 同步挂好所有增量 listener 后，先发送唯一 `{ type: 'ready', clientId, host: { home } }` 项，再发送事件。`ConnectionController` 仅在收到该 ready 项后发布 generation 并调用 `onConnected`，因此 baseline 不会跑在增量 listener 前面。
 
 `$events` 结束、返回 Remote stream error、收到非 ready 首项或畸形事件项，都会使当前 generation 失效。Controller 立即撤回 generation、发布 `reconnecting`，并在退避后重开 `$events`。Gateway mux 自己负责重建底层 WebSocket；Connection generation 负责重开 logical stream 并建立下一次 baseline 起点。
+
+## `/api` 响应压缩
+
+桥会对声明 `Accept-Encoding: gzip` 的客户端把完整 JSON 信封做 gzip 压缩：体积至少 1 KiB 且确有收缩时经 `gzipSync` 压缩，响应随后携带 `Content-Encoding: gzip`、修正后的 `Content-Length` 与 `Vary: Accept-Encoding`。非 gzip 客户端、小体积与不可压缩负载保持流式写出路径。缓冲是安全的，因为载体只提供完整信封而非 HTTP 流；两个事件通道是 WebSocket，从不经过此桥。这使得大体量 unary 响应（数百会话的会话列表）在低带宽隧道下仍可及时送达。
 
 <a id="model-experience"></a>
 ## 模型体验

@@ -16,6 +16,7 @@ The package carries browser-to-Host Remote calls, exact Fetch responses, and con
 - [Use this package](#use-this-package)
 - [Browser authentication and request trust](#browser-authentication-and-request-trust)
 - [Connection generation](#connection-generation)
+- [`/api` response compression](#api-response-compression)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
@@ -44,6 +45,10 @@ Before authentication, every request still passes `src/api-request-trust.ts`. It
 API Gateway Client registers the internal `$events` logical stream as the sole generation source, independently of whether any `$on` listener exists. The Host attaches all incremental listeners in the API Remotes source factory, then sends one `{ type: 'ready', clientId, host: { home } }` item before events. `ConnectionController` publishes that generation and calls `onConnected` only after the ready item arrives, so baseline acquisition cannot race ahead of incremental observation.
 
 An ended `$events` stream, a Remote stream error, a non-ready opening item, or a malformed event item invalidates the current generation. The controller immediately withdraws the generation, publishes `reconnecting`, and reopens `$events` after backoff. Gateway mux reconnects the physical WebSocket; Connection generation reopens the logical stream and establishes the next baseline starting point.
+
+## `/api` response compression
+
+The bridge gzip-compresses complete JSON envelopes for clients that advertise `Accept-Encoding: gzip`: bodies of at least 1 KiB are passed through `gzipSync` when they actually shrink, and the response then carries `Content-Encoding: gzip`, a corrected `Content-Length`, and `Vary: Accept-Encoding`. Non-gzip clients, tiny bodies, and incompressible payloads keep the streaming write path. Buffering is safe because the carrier serves complete envelopes, not HTTP streams; the two event channels are WebSockets and never pass through the bridge. This keeps large unary responses (a session list with hundreds of sessions) within reach over low-bandwidth tunnels.
 
 <a id="model-experience"></a>
 ## Model Experience
