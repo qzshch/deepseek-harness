@@ -225,7 +225,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
 }
 
 /** Default timeout for bounded unary calls (rpc-compare 2026-07-19: a hung host must not leave callers pending forever). */
-const DEFAULT_TIMEOUT_MS = 30_000
+const DEFAULT_TIMEOUT_MS = 120_000
 
 /** Whether a unary call uses the transport health deadline or only caller/connection cancellation. */
 type UnaryTimeoutPolicy = 'default' | 'caller-signal-only'

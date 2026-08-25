@@ -12,6 +12,10 @@ The node half guards every entry under `/api` before bridging or upgrading (`src
 
 `/api/events.mux` and `/api/events.host` each accept a WebSocket upgrade and send only the corresponding `ServerRequest` text messages to the browser; the client sends no application data over these sockets. If either socket ends, the current connection generation fails and rebuilds both streams; readiness still requires both sockets to be open and the `host.describe` HTTP call to succeed. Host teardown terminates both sockets, aborts their sources, and waits for source cleanup before returning. Ordinary network GETs to these paths return 426 with no SSE fallback; `toFetchHandler`'s SSE codec serves only the isomorphic in-process carrier.
 
+## `/api` response compression
+
+The bridge gzip-compresses complete JSON envelopes for clients that advertise `Accept-Encoding: gzip`: bodies of at least 1 KiB are passed through `gzipSync` when they actually shrink, and the response then carries `Content-Encoding: gzip`, a corrected `Content-Length`, and `Vary: Accept-Encoding`. Non-gzip clients, tiny bodies, and incompressible payloads keep the streaming write path. Buffering is safe because the carrier serves complete envelopes, not HTTP streams; the two event channels are WebSockets and never pass through the bridge. This keeps large unary responses (a session list with hundreds of sessions) within the RPC deadline over low-bandwidth tunnels.
+
 ## Model Experience
 
 None, as the wire consumer layer moves already-composed messages between browser and host; nothing here reaches a model request.

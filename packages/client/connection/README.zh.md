@@ -12,6 +12,10 @@ node 半侧在桥接或 upgrade 前守卫 `/api` 下的每个入口（`src/api-r
 
 `/api/events.mux` 与 `/api/events.host` 各接受一条 WebSocket upgrade，并只向浏览器发送对应的 `ServerRequest` 文本消息；客户端不会在这些 socket 上发送业务数据。任一 socket 结束都会使当前 connection generation 失败并重建两条流，连接就绪仍要求两条 socket 均已打开且 `host.describe` HTTP 调用成功。Host teardown 会终止两条 socket、中止各自的 source，并等待 source 清理完成后再返回。普通网络 GET 这些路径会返回 426，不保留 SSE（Server-Sent Events）回退；`toFetchHandler` 的 SSE 编解码只服务进程内同构载体。
 
+## `/api` 响应压缩
+
+桥会对声明 `Accept-Encoding: gzip` 的客户端把完整 JSON 信封做 gzip 压缩：体积至少 1 KiB 且确有收缩时经 `gzipSync` 压缩，响应随后携带 `Content-Encoding: gzip`、修正后的 `Content-Length` 与 `Vary: Accept-Encoding`。非 gzip 客户端、小体积与不可压缩负载保持流式写出路径。缓冲是安全的，因为载体只提供完整信封而非 HTTP 流；两个事件通道是 WebSocket，从不经过此桥。这使得大体量 unary 响应（数百会话的会话列表）在低带宽隧道下仍能落在 RPC 截止时间内。
+
 ## 模型体验
 
 无。协议消费层只在浏览器与主机之间搬运已经组合好的消息；这里没有任何内容进入模型请求。

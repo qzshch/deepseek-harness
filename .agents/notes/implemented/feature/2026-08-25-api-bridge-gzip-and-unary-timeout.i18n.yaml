@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-25-api-bridge-gzip-and-unary-timeout.md
+2026-08-25-api-bridge-gzip-and-unary-timeout.md: eced41c72fe3aabf3890e113344c29901cfa6b01
+2026-08-25-api-bridge-gzip-and-unary-timeout.zh.md: 46c4f722119fd7e623623246bbb5d412f9070061
