@@ -60,6 +60,15 @@ export function resolveChildDepth(parent: Agent, maxDepth: number | undefined): 
  * Resolve the child's `AgentOptions`: the parent's provider/model/maxTokens
  * route unless the request overrides it, stamped with the child's own
  * delegation depth.
+ *
+ * The parent's options freeze at create/resume time, but a web session routes
+ * every request through the model-selection waterfall, so its live route is
+ * the session's latest `request/header` — which the options never see. A
+ * child inheriting the raw options follows a stale route whenever the default
+ * model changed after the parent was created (the parent keeps working on the
+ * logged route while the child resolves the frozen one, splitting the two
+ * surfaces). Prefer the parent's logged route and fall back to its options
+ * when the log has no header yet.
  * @param parent - the delegating parent whose route the child inherits.
  * @param requested - per-child overrides, if any.
  * @param childDepth - the resolved delegation depth to stamp.
@@ -70,8 +79,9 @@ export function resolveChildAgentOptions(
   requested: AgentOptions | undefined,
   childDepth: number,
 ): AgentOptions {
-  const parentProvider = parent.options.provider
-  const parentModel = parent.options.model
+  const header = parent.session.requestHeader()?.config
+  const parentProvider = header?.provider ?? parent.options.provider
+  const parentModel = header?.model ?? parent.options.model
   const parentMaxTokens = parent.options.maxTokens
   return {
     ...parentProvider !== undefined ? { provider: parentProvider } : {},
