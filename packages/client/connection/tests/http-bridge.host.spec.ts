@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
+import { gunzipSync } from 'node:zlib'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
 import { bridge } from '../src/http-bridge.ts'
@@ -210,5 +211,59 @@ describe('HTTP bridge abort', () => {
     expect(status).toBe(415)
     expect(headers).toMatchObject({ connection: 'close' })
     expect(destroyed).toEqual([true])
+  })
+})
+
+describe('HTTP bridge gzip', () => {
+  const largePayload = JSON.stringify({ items: Array.from({ length: 500 }, (_, i) => ({ id: i, text: 'x'.repeat(200) })) })
+  const smallPayload = JSON.stringify({ ok: true })
+
+  function makeRequest(acceptEncoding?: string): IncomingMessage {
+    const request = Readable.from([]) as unknown as IncomingMessage
+    Object.assign(request, {
+      url: '/api/session.list',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(acceptEncoding === undefined ? {} : { 'accept-encoding': acceptEncoding }) },
+    })
+    return request
+  }
+
+  function makeResponse(): { response: ServerResponse; state: { status: number; headers: Record<string, string>; body: Buffer } } {
+    const state = { status: 0, headers: {} as Record<string, string>, body: Buffer.alloc(0) }
+    const chunks: Buffer[] = []
+    const response = Object.assign(new EventEmitter(), {
+      writableEnded: false,
+      writeHead(code: number, values: Record<string, string>) { state.status = code; state.headers = values; return this },
+      write(chunk: Buffer) { chunks.push(Buffer.from(chunk)); return true },
+      end(chunk?: Buffer) {
+        if (chunk !== undefined) chunks.push(Buffer.from(chunk))
+        state.body = Buffer.concat(chunks)
+        this.writableEnded = true
+        return this
+      },
+    }) as unknown as ServerResponse
+    return { response, state }
+  }
+
+  it('gzip-compresses a large JSON response for a gzip client', async () => {
+    const { response, state } = makeResponse()
+    await bridge(makeRequest('gzip'), response, { requestBodyMode: () => 'buffered', fetch: async () => Response.json(JSON.parse(largePayload)) }, 1e9)
+    expect(state.status).toBe(200)
+    expect(state.headers['content-encoding']).toBe('gzip')
+    expect(state.headers.vary).toContain('Accept-Encoding')
+    expect(JSON.parse(gunzipSync(state.body).toString('utf8'))).toEqual(JSON.parse(largePayload))
+  })
+
+  it('leaves large responses untouched for a non-gzip client', async () => {
+    const { response, state } = makeResponse()
+    await bridge(makeRequest(), response, { requestBodyMode: () => 'buffered', fetch: async () => Response.json(JSON.parse(largePayload)) }, 1e9)
+    expect(state.headers['content-encoding']).toBeUndefined()
+    expect(JSON.parse(state.body.toString('utf8'))).toEqual(JSON.parse(largePayload))
+  })
+
+  it('skips gzip for tiny bodies even when advertised', async () => {
+    const { response, state } = makeResponse()
+    await bridge(makeRequest('gzip'), response, { requestBodyMode: () => 'buffered', fetch: async () => Response.json(JSON.parse(smallPayload)) }, 1e9)
+    expect(state.headers['content-encoding']).toBeUndefined()
   })
 })
