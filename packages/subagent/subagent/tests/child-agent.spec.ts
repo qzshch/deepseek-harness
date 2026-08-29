@@ -73,4 +73,15 @@ describe('child Agent options', () => {
       subagentDepth: 1,
     })
   })
+
+  it('resolves an empty child route when the parent has no options or header', () => {
+    const id = SessionId('empty-parent')
+    const parent = {
+      id,
+      options: {},
+      session: Session.create(id),
+    } as Agent
+
+    expect(resolveChildAgentOptions(parent, undefined, 1)).toEqual({ subagentDepth: 1 })
+  })
 })
