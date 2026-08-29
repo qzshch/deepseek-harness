@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-client-locale` 为 web GUI 提供本地化：用户在“设置 → 常规”中从已注册语言中选择，UI 文案会立即切换。本包内置 `zh` 与 `en`，外部 client 插件可以增加语言及其命名空间字典。在 loopback 页面上，该选择以 `locale.preference` 存储在 `$DSH_HOME/settings.yaml` 中；非 loopback 页面即使由 Connection 认证所有 API 方法，也只在进程内保留选择。全新浏览器会先临时使用 `navigator` 请求的第一个已注册语言，直到允许读取的 Host 偏好到达并实时替换。插件作者使用内置字典形式时会获得完整类型检查，并通过框架 `t` 席位翻译；经 slot 渲染的文案会随语言切换即时更新。
+`dsh-client-locale` 为 web GUI 提供本地化：用户在“设置 → 常规”中从已注册语言中选择，UI 文案会立即切换。本包内置 `zh` 与 `en`，外部 client 插件可以增加语言及其命名空间字典。该选择经设置平面以 `locale.preference` 持久化在 `$DSH_HOME/settings.yaml` 中，因此一个浏览器做出的选择会被共享同一 Host 的其他浏览器采纳。全新浏览器会先临时使用 `navigator` 请求的第一个已注册语言，直到 Host 偏好到达并实时替换。插件作者使用内置字典形式时会获得完整类型检查，并通过框架 `t` 席位翻译；经 slot 渲染的文案会随语言切换即时更新。
 
 ## 目录
 
@@ -61,7 +61,7 @@ export function apply(ctx) {
 
 ### Host 半侧做什么
 
-Host 通过 settings 服务为 loopback 页面持久化偏好。Client 会刻意拒绝非 loopback 页面使用该 settings scope，因此即使 Connection 认证所有 API 方法，它们的 locale 选择仍只存在于进程内。
+Host 通过 settings 服务为每个被 fence 放行的浏览器持久化偏好；一个浏览器做出的选择会被共享同一 Host 的其他浏览器采纳。
 
 -----
 

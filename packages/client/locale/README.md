@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-locale` localizes the web GUI: users choose from the registered languages in Settings → General, and the UI copy switches immediately. The package ships `zh` and `en`, while external client plugins can add languages and their namespace dictionaries. On a loopback page, the choice persists as `locale.preference` in `$DSH_HOME/settings.yaml`; a non-loopback page keeps its selection process-local even though Connection authenticates every API method. A fresh browser starts provisionally in the first registered language requested by `navigator` until an allowed Host preference arrives and replaces it live. Plugin authors receive full type checking for the built-in dictionary form and translate through the framework `t` seat; copy rendered through slots follows language switches without a reload.
+`dsh-client-locale` localizes the web GUI: users choose from the registered languages in Settings → General, and the UI copy switches immediately. The package ships `zh` and `en`, while external client plugins can add languages and their namespace dictionaries. The choice persists as `locale.preference` in `$DSH_HOME/settings.yaml` through the settings plane, so a selection made in one browser is adopted by any other browser sharing the same Host. A fresh browser starts provisionally in the first registered language requested by `navigator` until the Host preference arrives and replaces it live. Plugin authors receive full type checking for the built-in dictionary form and translate through the framework `t` seat; copy rendered through slots follows language switches without a reload.
 
 ## Table of Contents
 
@@ -61,7 +61,7 @@ An external id is a non-empty ASCII BCP 47-style tag. Its fallback must already 
 
 ### What the Host half does
 
-The Host persists the preference through the settings service on loopback pages. The Client deliberately withholds that settings scope on non-loopback pages, so their locale selection remains process-local even though Connection authenticates every API method.
+The Host persists the preference through the settings service for every browser the fence admits; a selection made in one browser is adopted by any other browser sharing the same Host.
 
 -----
 

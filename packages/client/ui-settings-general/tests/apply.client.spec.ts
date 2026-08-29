@@ -16,7 +16,7 @@ import type { SettingsDocumentActionInjected } from '../src/client/SettingsDocum
 // so browser-language detection never runs and a fresh LocaleRuntime opens on
 // FALLBACK_LOCALE (en); bench stages zh explicitly on the locale instead.
 
-/** The seats this plugin fills for a loopback browser (slot name → expected component). */
+/** The seats this plugin fills for every browser (slot name → expected component). */
 const SEATS = [
   ['settings.trigger', TriggerContent],
   ['settings.header', HeaderContent],
@@ -25,7 +25,7 @@ const SEATS = [
   ['settings.section', GeneralSection],
 ] as const
 
-async function bench(isLoopback = true) {
+async function bench() {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
@@ -42,9 +42,6 @@ async function bench(isLoopback = true) {
   const settingsOpenDocument = vi.fn(() => Promise.resolve({
     ok: true as const, value: { opened: true as const },
   }))
-  ctx.provide('connection', {
-    isLoopback,
-  } as never)
   new TestRemote(ctx, {
     settings: { describe: settingsDescribe, openSettingsDocument: settingsOpenDocument },
   })
@@ -76,7 +73,7 @@ function generalEntry(slots: SlotRegistry) {
 
 describe('ui-settings-general apply', () => {
   it('declares the services it uses', () => {
-    expect(inject).toEqual(['slots', 'locale', 'connection', 'remote', 'remote.settings', 'settingsScope'])
+    expect(inject).toEqual(['slots', 'locale', 'remote', 'remote.settings', 'settingsScope'])
   })
 
   it('fills all five seats for declarations before or after apply', async () => {
@@ -165,13 +162,16 @@ describe('ui-settings-general apply', () => {
     await vi.waitFor(() => { expect(b.settingsDescribe).toHaveBeenCalledTimes(2) })
   })
 
-  it('withholds the Host document action off-loopback', async () => {
-    const b = await bench(false)
+  it('registers the Host document action without a loopback gate', async () => {
+    const b = await bench()
     declare(b.slots)
     const fiber = b.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(b.slots.entries('settings.action')).toEqual([])
-    expect(b.settingsDescribe).not.toHaveBeenCalled()
+    const action = b.slots.entries('settings.action')[0]!
+    expect(action.component).toBe(SettingsDocumentAction)
+    // Availability rides the shared mirror's single boot read; the page's
+    // loopback identity no longer withholds the seat.
+    await vi.waitFor(() => { expect(b.settingsDescribe).toHaveBeenCalledOnce() })
     await fiber.dispose()
     for (const [name] of SEATS) expect(b.slots.entries(name)).toEqual([])
   })

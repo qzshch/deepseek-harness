@@ -57,14 +57,14 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-/** A host-mode mirror plus a controller derived from it, over one fake wire. */
+/** A shared-mirror scope over one fake wire. */
 function derivedScope(
   api: { describe?: ReturnType<typeof vi.fn>; mutate?: ReturnType<typeof vi.fn> },
   spec: { namespace: string; decode?: (section: unknown) => UiTestSettings | undefined } = { namespace: 'ui-test' },
 ) {
   const wire = { settings: api } as never
   const mirror = new SettingsDescribeMirror(wire)
-  const scope = new SettingsScopeController<UiTestSettings>(wire, spec, mirror, 'host', settingsSchema)
+  const scope = new SettingsScopeController<UiTestSettings>(wire, spec, mirror, settingsSchema)
   return { mirror, scope }
 }
 
@@ -83,11 +83,11 @@ describe('SettingsScopeController', () => {
     const describeCall = vi.fn().mockResolvedValueOnce(described({ preference: 'dark' }, 3))
     const { mirror, scope } = derivedScope({ describe: describeCall })
     expect(scope.getSnapshot()).toEqual({
-      status: 'loading', value: undefined, revision: undefined, writable: false, mode: 'host',
+      status: 'loading', value: undefined, revision: undefined, writable: false,
     })
     await mirror.load()
     expect(scope.getSnapshot()).toEqual({
-      status: 'ready', value: { preference: 'dark' }, revision: 3, writable: true, mode: 'host',
+      status: 'ready', value: { preference: 'dark' }, revision: 3, writable: true,
     })
   })
 
@@ -231,8 +231,8 @@ describe('SettingsScopeController', () => {
     const mutate = vi.fn().mockResolvedValueOnce(ok(view({ preference: 'dark' }, 5)))
     const wire = { settings: { describe: describeCall, mutate } } as never
     const mirror = new SettingsDescribeMirror(wire)
-    const writer = new SettingsScopeController<UiTestSettings>(wire, { namespace: 'ui-test' }, mirror, 'host', settingsSchema)
-    const sibling = new SettingsScopeController<UiTestSettings>(wire, { namespace: 'ui-test' }, mirror, 'host', settingsSchema)
+    const writer = new SettingsScopeController<UiTestSettings>(wire, { namespace: 'ui-test' }, mirror, settingsSchema)
+    const sibling = new SettingsScopeController<UiTestSettings>(wire, { namespace: 'ui-test' }, mirror, settingsSchema)
     await mirror.load()
     await writer.set('preference', 'dark')
     expect(describeCall).toHaveBeenCalledTimes(1)
@@ -417,7 +417,7 @@ describe('SettingsScopeController', () => {
     } as never
     const wire = { settings: {} } as never
     const scope = new SettingsScopeController<UiTestSettings>(
-      wire, { namespace: 'ui-test' }, mirror, 'host', settingsSchema)
+      wire, { namespace: 'ui-test' }, mirror, settingsSchema)
     expect(scope.getSnapshot()).toMatchObject({ value: { preference: 'dark' }, revision: 1 })
 
     await scope.dispose()
@@ -430,21 +430,36 @@ describe('SettingsScopeController', () => {
     expect(scope.getSnapshot()).toMatchObject({ value: { preference: 'dark' }, revision: 1 })
   })
 
-  it('keeps a remote browser in memory mode without Host calls', async () => {
+  it('converges a never-loaded scope to unavailable on a refused read, and back on success', async () => {
     const describeCall = vi.fn()
-    const mutate = vi.fn()
-    const wire = { settings: { describe: describeCall, mutate } } as never
-    const mirror = new SettingsDescribeMirror(wire, 'memory')
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(described({ preference: 'dark' }, 1))
+    const wire = { settings: { describe: describeCall } } as never
+    const mirror = new SettingsDescribeMirror(wire)
     const scope = new SettingsScopeController<UiTestSettings>(
-      wire, { namespace: 'ui-test' }, mirror, 'memory', settingsSchema)
+      wire, { namespace: 'ui-test' }, mirror, settingsSchema)
+    expect(scope.getSnapshot().status).toBe('loading')
+    await mirror.load()
+    // The refused read holds no answer: the never-loaded scope is terminal-unavailable.
     expect(scope.getSnapshot()).toEqual({
-      status: 'unavailable', value: undefined, revision: undefined, writable: false, mode: 'memory',
+      status: 'unavailable', value: undefined, revision: undefined, writable: false,
     })
     await mirror.load()
-    await scope.set('preference', 'dark')
-    await scope.dispose()
-    expect(describeCall).not.toHaveBeenCalled()
-    expect(mutate).not.toHaveBeenCalled()
+    expect(scope.getSnapshot()).toMatchObject({
+      status: 'ready', value: { preference: 'dark' }, revision: 1,
+    })
+  })
+
+  it('keeps a held section through a refused refresh instead of converging it', async () => {
+    const describeCall = vi.fn()
+      .mockResolvedValueOnce(described({ preference: 'dark' }, 3))
+      .mockRejectedValueOnce(new Error('offline'))
+    const { mirror, scope } = derivedScope({ describe: describeCall })
+    await mirror.load()
+    await mirror.load()
+    // The held section keeps serving; only the mirror's error reports the miss.
+    expect(scope.getSnapshot()).toMatchObject({ status: 'ready', value: { preference: 'dark' } })
+    expect(mirror.getSnapshot().error).toBe('offline')
   })
 
   it('carries the composition base and the user layer into the snapshot', async () => {
@@ -537,10 +552,10 @@ describe('SettingsScopeBinder.bind', () => {
     expect(theme.getSnapshot()).toMatchObject({ revision: 1 })
   })
 
-  it('binds a remote browser in memory mode without starting a settings read', async () => {
-    const describeCall = vi.fn()
+  it('binds a non-loopback page to the wire exactly like a loopback one', async () => {
+    const describeCall = vi.fn().mockResolvedValue(described({ preference: 'dark' }, 1))
     const wire = { settings: { describe: describeCall } }
-    const mirror = new SettingsDescribeMirror(wire as never, 'memory')
+    const mirror = new SettingsDescribeMirror(wire as never)
     const ctx = new Context()
     ctx.provide('connection', { api: wire, isLoopback: false } as never)
     let scope!: SettingsScope<UiTestSettings>
@@ -553,8 +568,10 @@ describe('SettingsScopeBinder.bind', () => {
       },
     })
     await fiber.await()
-    expect(scope.getSnapshot()).toMatchObject({ status: 'unavailable', mode: 'memory', writable: false })
+    await vi.waitFor(() => {
+      expect(scope.getSnapshot()).toMatchObject({ status: 'ready', value: { preference: 'dark' } })
+    })
+    expect(describeCall).toHaveBeenCalledTimes(1)
     await fiber.dispose()
-    expect(describeCall).not.toHaveBeenCalled()
   })
 })

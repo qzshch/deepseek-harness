@@ -21,7 +21,7 @@ describe('invariant companion', () => {
 
   it('client apply provides ctx.locale seeded with the zh/en common namespace', async () => {
     // The feature registers its own Language settings row, hence the slots edge.
-    expect(inject).toEqual(['slots', 'connection', 'remote', 'settingsScope'])
+    expect(inject).toEqual(['slots', 'remote', 'settingsScope'])
     const ctx = new Context()
     new SlotRegistry(ctx)
     ctx.provide('connection', { api: { settings: {} }, isLoopback: false } as never)

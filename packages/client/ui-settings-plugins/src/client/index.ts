@@ -54,7 +54,7 @@ const NS = 'settings.plugins'
 
 /** Required services (cordis fiber inject). */
 export const inject = [
-  'slots', 'locale', 'connection', 'remote', 'remote.credentials', 'remote.session', 'settingsScope',
+  'slots', 'locale', 'remote', 'remote.credentials', 'remote.session', 'settingsScope',
 ]
 
 /**

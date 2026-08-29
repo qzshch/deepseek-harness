@@ -1140,9 +1140,9 @@ describe('ModelsSection', () => {
   })
 
   it('keeps the card usable when the write rejects instead of answering', async () => {
-    // A transport failure (disconnect, or the 403 a non-loopback browser now
-    // gets on the whole configuration plane) rejects rather than returning a
-    // failed envelope: without a catch the card would stay busy forever.
+    // A transport failure (for example a dropped connection) rejects rather
+    // than returning a failed envelope: without a catch the card would stay
+    // busy forever.
     await mountDeepSeekCard({ mutate: vi.fn(() => Promise.reject(new Error('connection lost'))) })
     fireEvent.click(screen.getByText(en.customized))
     fireEvent.change(screen.getByLabelText<HTMLInputElement>(en.baseUrl), { target: { value: 'https://next' } })

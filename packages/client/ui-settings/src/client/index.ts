@@ -12,7 +12,6 @@
  * Export discipline: packages/client/AGENTS.md.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only service merge for the connection lifecycle event.
 import type {} from '@deepseek-ai/dsh-client-connection/client'
 // Type-only pair supplying `$on` and its key face without dragging a build
@@ -37,10 +36,9 @@ export type {
 } from './settings-mirror.ts'
 
 /**
- * Required services: the wire handle for the mirror's reads and the forwarded
- * settings invalidation the mirror refreshes on.
+ * Required services: the wire face the mirror reads and writes through.
  */
-export const inject = ['connection', 'remote', 'remote.settings']
+export const inject = ['remote', 'remote.settings']
 
 /**
  * Provide the settings-namespace scope service over one shared describe
@@ -53,11 +51,10 @@ export const inject = ['connection', 'remote', 'remote.settings']
  */
 export function apply(ctx: Context): void {
   const schema = new SettingsSchemaService(ctx)
-  const connection = ctx.get('connection') as ConnectionHandle
   // Captured once here, where `remote.settings` is declared in this plugin's
   // own `inject`; the binder hands the same face to every scope it binds.
   const wire = { settings: ctx.remote.settings }
-  const mirror = new SettingsDescribeMirror(wire, connection.isLoopback ? 'host' : 'memory')
+  const mirror = new SettingsDescribeMirror(wire)
   ctx.effect(() => {
     const disposers = [
       ctx.remote.$on('settings/document-updated', () => { void mirror.load() }),

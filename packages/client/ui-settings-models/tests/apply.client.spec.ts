@@ -18,7 +18,7 @@ import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
 // so browser-language detection never runs and a fresh LocaleRuntime opens on
 // FALLBACK_LOCALE (en); bench stages zh explicitly on the locale instead.
 
-async function bench(isLoopback = true, settings?: object, services: object = {}) {
+async function bench(settings?: object, services: object = {}) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
@@ -41,7 +41,6 @@ async function bench(isLoopback = true, settings?: object, services: object = {}
     // ui-settings apply also provides the settingsSchema service.
     settings: settings ?? scriptedSettingsRemote().settings,
   })
-  ctx.provide('connection', { api: services, isLoopback } as never)
   await ctx.plugin({ inject: [...settingsInject], apply: settingsApply }).await()
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, remote }
 }
@@ -189,8 +188,25 @@ describe('ui-settings-models apply', () => {
     expect(() => b.locale.register('settings.models', 'en', {})).not.toThrow()
   })
 
-  it('keeps remote-browser acknowledgement in process memory', async () => {
-    const b = await bench(false)
+  it('rides the welcome acknowledgement over the wire with no process-memory fallback', async () => {
+    const settings = {
+      describe: vi.fn(() => Promise.resolve({
+        ok: true as const,
+        value: {
+          writable: true,
+          hasDocument: false,
+          namespaces: [{
+            ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+            schema: {},
+            value: {},
+            applies: 'live' as const,
+            secrets: [],
+            revision: 0,
+          }],
+        },
+      })),
+    }
+    const b = await bench(settings)
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
@@ -200,6 +216,7 @@ describe('ui-settings-models apply', () => {
     )()
 
     await injected.controller.load()
+    expect(settings.describe).toHaveBeenCalled()
     expect(injected.controller.store.getSnapshot()).toEqual({
       status: 'ready', acknowledged: false, error: null,
     })
@@ -271,7 +288,7 @@ describe('pushed invalidations', () => {
         },
       })),
     }
-    const b = await bench(true, settings)
+    const b = await bench(settings)
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
@@ -309,7 +326,7 @@ describe('pushed invalidations', () => {
       },
     }))
     const listProviders = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
-    const b = await bench(true, { describe }, { listProviders })
+    const b = await bench({ describe }, { listProviders })
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.section')

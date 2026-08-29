@@ -1,7 +1,9 @@
 /** Page-store join: directory × namespaces × credentials, with last-good rows on failure. */
 import { describe, expect, it } from 'vitest'
 import type { RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
-import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
+import {
+  SettingsDescribeMirror, type SettingsDescribeFace,
+} from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
 import { settingsSchema } from './settings-schema.client.ts'
 import { messageOf, ModelsSettingsStore } from '../src/client/store.ts'
 
@@ -281,13 +283,17 @@ describe('edge joins', () => {
     expect(store.store.getSnapshot()).toMatchObject({ status: 'error', error: 'settings down' })
   })
 
-  it('reports a terminally unavailable settings mirror precisely', async () => {
+  it('reports a no-answer settings mirror with its precise fallback error', async () => {
     const { face } = api()
-    const store = new ModelsSettingsStore(
-      face,
-      settingsSchema,
-      new SettingsDescribeMirror(face, 'memory'),
-    )
+    // A describe face that settles without holding an answer or an error: the
+    // defensive branch behind `mirrored.error ??` in the store's load.
+    const noAnswer: SettingsDescribeFace = {
+      getSnapshot: () => ({ status: 'idle', view: undefined, error: null }),
+      subscribe: () => () => {},
+      ensure: () => Promise.resolve(),
+      acceptView: () => {},
+    }
+    const store = new ModelsSettingsStore(face, settingsSchema, noAnswer)
     await store.load()
     expect(store.store.getSnapshot()).toMatchObject({
       status: 'error',
