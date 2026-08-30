@@ -457,6 +457,113 @@ describe('toPiContext', () => {
     expect(onDegrade).not.toHaveBeenCalled()
   })
 
+  it('persists provider usage in the replay state so the estimator can anchor on it', () => {
+    const state = toPiReplayState(assistant({
+      content: [{ type: 'text', text: 'done' }],
+      usage: usage(85000, 1200),
+    }))
+    expect(state.response).toMatchObject({
+      kind: 'pi-ai',
+      usage: { input: 85000, output: 1200, cacheRead: 0, cacheWrite: 0, totalTokens: 86200 },
+    })
+  })
+
+  it('omits the usage field from the replay state when the response reported no tokens', () => {
+    const state = toPiReplayState(assistant({ content: [{ type: 'text', text: 'done' }] }))
+    expect(state.response).not.toHaveProperty('usage')
+  })
+
+  it('replays the persisted usage onto the reconstructed assistant message', () => {
+    const state = toPiReplayState(assistant({
+      content: [{ type: 'text', text: 'done' }],
+      usage: usage(85000, 1200),
+    }))
+    const context = toPiContext({
+      provider: 'deepseek',
+      model: 'm',
+      messages: [createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        source: {
+          kind: 'model',
+          ...{ provider: 'deepseek', model: 'deepseek-v4-flash', replayState: state },
+        },
+      })],
+    })
+    expect((context.messages[0] as AssistantMessage).usage).toMatchObject({
+      input: 85000,
+      output: 1200,
+      totalTokens: 86200,
+    })
+  })
+
+  it('falls back to zero usage when the durable envelope predates the usage field', () => {
+    const context = toPiContext({
+      provider: 'deepseek',
+      model: 'm',
+      messages: [createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        source: {
+          kind: 'model',
+          ...{
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+            replayState: {
+              response: {
+                kind: 'pi-ai',
+                version: 2,
+                api: 'openai-completions',
+                provider: 'deepseek',
+                model: 'deepseek-v4-flash',
+                stopReason: 'stop',
+              },
+              blocks: [{ type: 'text' }],
+            },
+          },
+        },
+      })],
+    })
+    expect((context.messages[0] as AssistantMessage).usage).toMatchObject({
+      input: 0,
+      output: 0,
+      totalTokens: 0,
+    })
+  })
+
+  it('degrades a replay state whose usage is malformed to provider-neutral history', () => {
+    const onDegrade = vi.fn()
+    const context = toPiContext({
+      provider: 'deepseek',
+      model: 'm',
+      messages: [createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        source: {
+          kind: 'model',
+          ...{
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+            replayState: {
+              response: {
+                kind: 'pi-ai',
+                version: 2,
+                api: 'openai-completions',
+                provider: 'deepseek',
+                model: 'deepseek-v4-flash',
+                stopReason: 'stop',
+                usage: { input: -1, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+              },
+              blocks: [{ type: 'text' }],
+            },
+          },
+        },
+      })],
+    }, undefined, onDegrade)
+    expect(context.messages[0]).toMatchObject({ role: 'assistant', api: 'dsh-foreign' })
+    expect(onDegrade).toHaveBeenCalledWith(expect.stringContaining('usage input must be a non-negative number'))
+  })
+
   it('replays all native block kinds when optional metadata is absent', () => {
     const state = toPiReplayState(assistant({
       content: [
@@ -743,6 +850,14 @@ describe('toStreamChunks', () => {
             provider: 'deepseek',
             model: 'deepseek-v4-flash',
             stopReason: 'stop',
+            usage: {
+              input: 3,
+              output: 2,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 5,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
           },
           blocks: [{ type: 'text' }],
         },

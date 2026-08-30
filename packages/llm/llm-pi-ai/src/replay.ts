@@ -3,7 +3,11 @@
  *
  * Harness content remains the durable source for text and tool calls. This
  * module stores only the provider-native metadata needed to reconstruct a
- * pi-ai assistant message on a later request.
+ * pi-ai assistant message on a later request. The replayed usage record is
+ * load-bearing, not cosmetic: pi-ai's context estimator anchors its token
+ * budget on the most recent assistant usage, so dropping it makes every
+ * request re-estimate the whole history character-by-character and erodes the
+ * output budget as the session grows.
  *
  * @module dsh-llm-pi-ai/replay
  */
@@ -32,6 +36,13 @@ export interface PiAiReplayResponse {
   /** Provider-native effort for historical replay; absence is preserved. */
   providerThinkingLevel?: string
   stopReason: AssistantMessage['stopReason']
+  /**
+   * Provider-reported usage of this response, replayed so pi-ai's context
+   * estimator can anchor its budget math on the real context size instead of
+   * re-estimating the full history. Absent when the response reported no
+   * tokens (older sessions and providers that omit usage).
+   */
+  usage?: PiUsage
 }
 
 /** The validated halves of one pi-ai replay envelope. */
@@ -66,6 +77,16 @@ function emptyPiUsage(): PiUsage {
 }
 
 /**
+ * Whether a usage record can anchor pi-ai's context estimator. Mirrors the
+ * estimator's own gate (`calculateContextTokens(usage) > 0` in
+ * @earendil-works/pi-ai's `estimateMessages`) without importing its internals.
+ */
+function isAnchorableUsage(usage: PiUsage): boolean {
+  return usage.totalTokens > 0 ||
+    usage.input + usage.output + usage.cacheRead + usage.cacheWrite > 0
+}
+
+/**
  * Project a successful pi-ai response into the minimal durable replay state.
  * The per-block half is index-aligned with the streamed blocks (pi-ai content
  * order), so `BlockAssembler` prunes an entry with its block whenever assembly
@@ -87,6 +108,7 @@ export function toPiReplayState(message: AssistantMessage, requestedModel = mess
     ...message.responseId === undefined ? {} : { responseId: message.responseId },
     ...message.providerThinkingLevel === undefined ? {} : { providerThinkingLevel: message.providerThinkingLevel },
     stopReason: message.stopReason,
+    ...isAnchorableUsage(message.usage) ? { usage: message.usage } : {},
   }
   return {
     response,
@@ -132,6 +154,15 @@ function readReplayState(value: unknown): PiAiReplayState {
   if (response['responseModel'] !== undefined && typeof response['responseModel'] !== 'string') return invalidReplay('responseModel must be a string')
   if (response['responseId'] !== undefined && typeof response['responseId'] !== 'string') return invalidReplay('responseId must be a string')
   if (response['providerThinkingLevel'] !== undefined && typeof response['providerThinkingLevel'] !== 'string') return invalidReplay('providerThinkingLevel must be a string')
+  if (response['usage'] !== undefined) {
+    const rawUsage = response['usage']
+    if (typeof rawUsage !== 'object' || rawUsage === null || Array.isArray(rawUsage)) return invalidReplay('usage must be an object')
+    const usage = rawUsage as Record<string, unknown>
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const) {
+      const value = usage[key]
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return invalidReplay(`usage ${key} must be a non-negative number`)
+    }
+  }
   const blocks = envelope['blocks']
   if (!Array.isArray(blocks)) return invalidReplay('blocks must be an array')
   for (const [index, value] of blocks.entries()) {
@@ -227,7 +258,10 @@ function replayedAssistant(message: Message, source: ModelMessageSource, rawStat
     ...state.response.responseModel === undefined ? {} : { responseModel: state.response.responseModel },
     ...state.response.responseId === undefined ? {} : { responseId: state.response.responseId },
     ...state.response.providerThinkingLevel === undefined ? {} : { providerThinkingLevel: state.response.providerThinkingLevel },
-    usage: emptyPiUsage(),
+    // Replay the real usage so pi-ai's estimator anchors on it; older sessions
+    // whose envelope predates the usage field fall back to the zero value and
+    // the estimator degrades to its full-history character estimate.
+    usage: state.response.usage ?? emptyPiUsage(),
     stopReason: state.response.stopReason,
     timestamp: 0,
   }
@@ -237,7 +271,8 @@ function replayedAssistant(message: Message, source: ModelMessageSource, rawStat
  * Convert one durable Harness assistant message into pi-ai history.
  *
  * Durable content is the authoritative record; replay metadata only restores
- * native fidelity (ids, signatures). A replay state this build cannot use —
+ * native fidelity (ids, signatures, and the usage anchor that keeps pi-ai's
+ * context estimate from re-scoring the whole history). A replay state this build cannot use —
  * another adapter's kind, another version, a malformed value, or metadata that
  * no longer matches the content — therefore degrades the one message to
  * provider-neutral history instead of failing the request.
