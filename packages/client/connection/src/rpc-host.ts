@@ -12,6 +12,7 @@ import {
 import { clientRequestSchema } from './rpc-schema.ts'
 import { bridge } from './http-bridge.ts'
 import { isRemoteAuthority, isTrustedApiRequest } from './api-request-trust.ts'
+import { isClientIpAllowed, type ClientIpAllowlistEntry } from './client-ip-allowlist.ts'
 import { API_PATH } from './api-path.ts'
 import type { BrowserAuth } from './browser-auth.ts'
 import { Peer } from './peer.ts'
@@ -83,11 +84,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
    * @param browserAuth - process token and persistent browser-session owner.
+   * @param trustedClientIps - parsed client-source-IP allowlist that skips browser authentication.
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
     private readonly browserAuth: BrowserAuth,
+    private readonly trustedClientIps: readonly ClientIpAllowlistEntry[],
   ) {
     super(ctx, 'connection')
     this.owner = ctx
@@ -129,6 +132,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
   admit(request: ConnectionTrustRequest): PeerAdmission {
     if (!this.isTrusted(request)) return { rejection: 403 }
     if (this.disposed) return { rejection: 401 }
+    if (isClientIpAllowed(request.remoteAddress, this.trustedClientIps)) return { peer: this.browserPeer }
     const secure = this.owner.get('webServer')?.protocol === 'https:'
     if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer }
     const id = this.browserAuth.authenticateApi(request, secure)
@@ -191,6 +195,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * Authenticate an index request; native TLS listeners mint Secure cookies.
    */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean {
+    if (isClientIpAllowed(request.remoteAddress, this.trustedClientIps)) return true
     return this.browserAuth.authorizeIndex(request, response, this.ctx.get('webServer')?.protocol === 'https:')
   }
 
@@ -261,7 +266,10 @@ export class HostConnectionService extends Service implements HostConnectionHand
       kind: 'prefix',
       path: channel,
       handler: async (req, res) => {
-        const admission = this.admit(req)
+        const admission = this.admit({
+          headers: req.headers,
+          remoteAddress: req.socket?.remoteAddress,
+        })
         if ('rejection' in admission) {
           res.writeHead(admission.rejection)
           res.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden')
