@@ -920,11 +920,31 @@ describe('Typert Remote streams', () => {
     rejected.resume()
     ;(request as { abort(): void }).abort()
   })
+
+  it('lets an allowlisted client source open the Gateway socket and stream without a browser session', async () => {
+    const { ctx } = await setup(true, {}, { trustedClientIps: ['127.0.0.1'] })
+    const socket = new WebSocket(`ws://127.0.0.1:${String(ctx.webServer.port)}/api/remote.mux`)
+    await once(socket, 'open')
+    const frames: Record<string, unknown>[] = []
+    socket.on('message', (data) => { frames.push(JSON.parse(rawText(data)) as Record<string, unknown>) })
+
+    sendOpen(socket, 'sync', 'feed/sync', { label: 's' })
+    await vi.waitFor(() => {
+      expect(frames).toEqual([
+        { type: 'item', streamId: 'sync', value: 's:one' },
+        { type: 'item', streamId: 'sync', value: 's:two' },
+        { type: 'end', streamId: 'sync' },
+      ])
+    })
+    socket.close()
+    await once(socket, 'close')
+  })
 })
 
 async function setup(
   transport: boolean,
   gatewayConfig: GatewayConfig = {},
+  connectionConfig?: { readonly trustedClientIps?: string[] },
 ): Promise<{ readonly ctx: Context; readonly service: FeedService }> {
   const ctx = new Context()
   roots.push(ctx)
@@ -935,7 +955,10 @@ async function setup(
   await ctx.plugin(TypertRegistry)
   await ctx.plugin(TypertGatewayService, gatewayConfig)
   if (transport) {
-    await ctx.plugin({ inject: [...connectionInject], apply: applyConnection })
+    await ctx.plugin(
+      { inject: [...connectionInject], apply: applyConnection },
+      connectionConfig ?? {},
+    )
   }
   await ctx.plugin(FeedService)
   ctx.typert.register({

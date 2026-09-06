@@ -336,6 +336,46 @@ describe('connection node half', () => {
     await dispose()
   })
 
+  it('lets allowlisted client sources through without a browser session', async () => {
+    const { connection, dispose } = await mounted({
+      trustedHosts: ['100.75.247.91'],
+      trustedClientIps: ['100.64.0.0/10'],
+    })
+    // A mesh source whose Host passes the declared-authority fence skips
+    // browser authentication entirely.
+    expect(connection.requestRejection({
+      headers: { host: '100.75.247.91:3080' },
+      remoteAddress: '100.75.247.91',
+    })).toBeUndefined()
+    // The same Host from an off-mesh source still demands a session.
+    expect(connection.requestRejection({
+      headers: { host: '100.75.247.91:3080' },
+      remoteAddress: '203.0.113.7',
+    })).toBe(401)
+    // Loopback is not allowlisted: a cookieless local request still 401s.
+    expect(connection.requestRejection({
+      headers: { host: '127.0.0.1:3080' },
+      remoteAddress: '127.0.0.1',
+    })).toBe(401)
+    // The index is served to an allowlisted source without a launch token.
+    const index = fakeResponse()
+    expect(connection.authorizeIndex({
+      method: 'GET',
+      url: '/',
+      headers: { host: '100.75.247.91:3080' },
+      remoteAddress: '100.121.71.79',
+    }, index.response)).toBe(true)
+    // A non-allowlisted source cannot open the index bare.
+    const denied = fakeResponse()
+    expect(connection.authorizeIndex({
+      method: 'GET',
+      url: '/',
+      headers: { host: '100.75.247.91:3080' },
+      remoteAddress: '203.0.113.7',
+    }, denied.response)).toBe(false)
+    await dispose()
+  })
+
   it('provides a disposable dedicated RPC channel', async () => {
     const ctx = new Context()
     const routes: WebRoute[] = []

@@ -62,7 +62,7 @@ async function fixture() {
   ctx.provide('workspaceChanges', { summary, diff })
   const opener = vi.fn(async (_request: { path: string; action?: 'reveal' }, _signal: AbortSignal) => ({ opened: true as const }))
   ctx.provide('sessionController', { openWorkspacePath: opener, workspaceDesktop: () => ({ name: 'desktop', available: true, fileManager: 'finder' }) } as never)
-  const connection = new HostConnectionService(ctx, [], {} as BrowserAuth)
+  const connection = new HostConnectionService(ctx, [], {} as BrowserAuth, [])
   await ctx.plugin({
     inject: ['connection', 'sessionQuery', 'sessionController', 'workspaceFiles', 'fs', 'sandboxPolicy', 'workspaceChanges'],
     apply: registerPresentOpen,

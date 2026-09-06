@@ -9,6 +9,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority } from './api-request-trust.ts'
+import { parseClientIpAllowlistEntry } from './client-ip-allowlist.ts'
 import { BrowserAuth } from './browser-auth.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
@@ -100,6 +101,13 @@ export interface ConnectionConfig {
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /**
+   * TCP source addresses (exact IPs or CIDR) that skip browser authentication
+   * (launch token / signed cookie). The Host/Origin and cross-site fences
+   * still apply to their requests. An entry that is not a valid IP or CIDR
+   * fails plugin load.
+   */
+  trustedClientIps?: string[]
 }
 
 export const Config: z<ConnectionConfig> = z.object({
@@ -107,6 +115,7 @@ export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
   cookieMaxAgeDays: z.natural().min(1).default(30),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  trustedClientIps: z.array(String).default([]),
 })
 
 /**
@@ -122,6 +131,9 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   const trustedHosts = config?.trustedHosts ?? []
   const cookieMaxAgeDays = config?.cookieMaxAgeDays ?? 30
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  // Config boundary: a malformed client-IP entry fails the load loudly here
+  // rather than silently matching (or matching nothing) at request time.
+  const trustedClientIps = (config?.trustedClientIps ?? []).map(parseClientIpAllowlistEntry)
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
@@ -130,6 +142,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     ctx,
     trustedHosts,
     await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
+    trustedClientIps,
   )
   ctx.inject(['webServer'], (webCtx) => {
     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
@@ -141,7 +154,10 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
       kind: 'prefix',
       path: API_PATH,
       handler: async (req, res) => {
-        const rejection = connection.requestRejection(req)
+        const rejection = connection.requestRejection({
+          headers: req.headers,
+          remoteAddress: req.socket?.remoteAddress,
+        })
         if (rejection !== undefined) {
           res.writeHead(rejection)
           res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
