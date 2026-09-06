@@ -25,7 +25,7 @@ describe('Connection binary RPC', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0, compression })
-      await ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth) })
+      await ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth, []) })
       const connection = ctx.get('connection') as HostConnectionService
       const data = new Uint8Array(1024 * 1024).fill(65)
       data.set([0, 128, 255])
@@ -73,7 +73,7 @@ describe('Connection binary RPC', () => {
 
   it('roundtrips raw bytes and metadata on the existing channel while JSON results and errors stay JSON', async () => {
     const ctx = new Context()
-    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth) })
+    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth, []) })
     await fiber.await()
     try {
       const connection = ctx.get('connection') as HostConnectionService
@@ -133,7 +133,7 @@ describe('Connection binary RPC', () => {
 
   it('frames attachments already projected by the result owner', async () => {
     const ctx = new Context()
-    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth) })
+    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth, []) })
     await fiber.await()
     try {
       const connection = ctx.get('connection') as HostConnectionService
@@ -186,7 +186,7 @@ describe('Connection binary RPC', () => {
 
   it('roundtrips nested, optional and root attachment paths without reserving field names', async () => {
     const ctx = new Context()
-    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth) })
+    const fiber = ctx.plugin((owner) => { new HostConnectionService(owner, [], {} as BrowserAuth, []) })
     await fiber.await()
     try {
       const data = new Uint8Array([0, 128, 255])
