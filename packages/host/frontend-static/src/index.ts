@@ -133,7 +133,12 @@ export function apply(ctx: Context, config: Config): void {
       res,
       distRoot,
       distIndex,
-      () => ctx.connection.authorizeIndex(req, res),
+      () => ctx.connection.authorizeIndex({
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        remoteAddress: req.socket?.remoteAddress,
+      }, res),
       renderIndex,
     )
   }), 'frontend-static: fallback seat')

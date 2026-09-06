@@ -128,7 +128,8 @@ export async function bridge(
     }
     const headerRecord = Object.fromEntries(responseHeaders.entries())
     res.writeHead(response.status, requestUnread ? { ...headerRecord, connection: 'close' } : headerRecord)
-    res.end(compressed ?? raw)
+    res.write(compressed ?? raw)
+    res.end()
     if (requestUnread) req.destroy()
     return
   }
