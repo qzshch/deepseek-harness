@@ -9,6 +9,8 @@ import type { ClientRequest, RpcId as RpcIdType } from './rpc.ts'
 import { clientRequestSchema } from './rpc-schema.ts'
 import { bridge } from './http-bridge.ts'
 import { isRemoteAuthority, isTrustedApiRequest } from './api-request-trust.ts'
+import { isClientIpAllowed, type ClientIpAllowlistEntry } from './client-ip-allowlist.ts'
+import { isClientIpAllowed, type ClientIpAllowlistEntry } from './client-ip-allowlist.ts'
 import { API_PATH } from './api-path.ts'
 import { Peer } from './peer.ts'
 import type { ConnectionAuthentication } from './authentication.ts'
@@ -70,10 +72,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * Provide the Host half over the active HTTP server.
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
+   * @param trustedClientIps - parsed client-source-IP allowlist that skips credential
+   * verification (empty when unset; callers pass the deployment's allowlist).
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
+    private readonly trustedClientIps: readonly ClientIpAllowlistEntry[] = [],
   ) {
     super(ctx, 'connection')
     this.owner = ctx
@@ -88,6 +93,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
       const facts = { ...request, url: request.url.href }
       if (!this.isTrustedRequest(facts)) return { kind: 'deny', status: 403 }
       if (policy === 'anonymous') return { kind: 'allow' }
+      if (isClientIpAllowed(facts.remoteAddress, this.trustedClientIps)) return { kind: 'allow', peer: this.browserPeer }
       const admission = this.authentication.authenticate(facts)
       return 'rejection' in admission
         ? { kind: 'deny', status: admission.rejection }
@@ -117,6 +123,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
   admit(request: ConnectionTrustRequest): PeerAdmission {
     if (!this.isTrustedRequest(request)) return { rejection: 403 }
     if (this.disposed) return { rejection: 401 }
+    // Allowlisted client sources skip credential verification (launch token /
+    // signed cookie); the Host/Origin fence above still applies to them.
+    if (isClientIpAllowed(request.remoteAddress, this.trustedClientIps)) return { peer: this.browserPeer }
     return this.authentication.authenticate(request)
   }
 

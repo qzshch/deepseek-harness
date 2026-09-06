@@ -98,11 +98,15 @@ export type RpcMessage = ClientRequest | ServerResponse
 export interface ConnectionTrustRequest {
   /** Request headers supplied by either the Fetch or node:http representation. */
   readonly headers: Headers | Readonly<Record<string, string | readonly string[] | undefined>>
-  /** Cancellation of a Fetch request. */
-  readonly signal?: AbortSignal | undefined
-  /** Current disconnection state of a Node carrier. */
-  readonly socket?: { readonly destroyed: boolean } | undefined
-  /** Method and target supplied by the HTTP carrier. */
+  /** TCP source address of the peer (node http socket remoteAddress), when the caller exposes it. */
+  readonly remoteAddress?: string | undefined
+}
+
+/** HTTP status returned before dispatch, or undefined when the request may proceed. */
+export type ConnectionRequestRejection = 401 | 403 | undefined
+
+/** Root/index request facts used by the browser-token exchange. */
+export interface ConnectionIndexRequest extends ConnectionTrustRequest {
   readonly method?: string | undefined
   readonly url?: string | undefined
 }

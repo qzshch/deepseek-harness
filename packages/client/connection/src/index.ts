@@ -8,6 +8,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority } from './api-request-trust.ts'
+import { parseClientIpAllowlistEntry } from './client-ip-allowlist.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { ConnectionAuthentication } from './authentication.ts'
 import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
@@ -101,12 +102,20 @@ export interface ConnectionConfig {
   trustedHosts?: string[]
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /**
+   * TCP source addresses (exact IPs or CIDR) that skip browser authentication
+   * (launch token / signed cookie). The Host/Origin and cross-site fences
+   * still apply to their requests. An entry that is not a valid IP or CIDR
+   * fails plugin load.
+   */
+  trustedClientIps?: string[]
 }
 
 export const Config: z<ConnectionConfig> = z.object({
   recovery: ConnectionRecoveryConfigSchema.default({}),
   trustedHosts: z.array(String).default([]),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  trustedClientIps: z.array(String).default([]),
 })
 
 /**
@@ -121,13 +130,16 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  // Config boundary: a malformed client-IP entry fails the load loudly here
+  // rather than silently matching (or matching nothing) at request time.
+  const trustedClientIps = (config?.trustedClientIps ?? []).map(parseClientIpAllowlistEntry)
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
   new ConnectionAuthentication(ctx)
   ctx.inject(['connection.authentication'], (connectionCtx) => {
-    const connection = new HostConnectionService(connectionCtx, trustedHosts)
+    const connection = new HostConnectionService(connectionCtx, trustedHosts, trustedClientIps)
     connectionCtx.inject(['webServer'], (webCtx) => {
       assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
       webCtx.on('webserver/index-inject', (table) => {

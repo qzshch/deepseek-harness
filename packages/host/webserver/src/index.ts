@@ -826,7 +826,11 @@ export class WebServer extends Service {
     for (const [name, value] of Object.entries(req.headers)) {
       for (const item of typeof value === 'string' ? [value] : value ?? []) headers.append(name, item)
     }
-    const response = await resource(new Request(target, { method: req.method, headers, signal }), peer)
+    // Socket facts ride as an own property: routes consume them as the
+    // optional ConnectionTrustRequest fields with no Fetch equivalent.
+    const request = new Request(target, { method: req.method, headers, signal })
+    ;(request as Request & { remoteAddress?: string | undefined }).remoteAddress = req.socket?.remoteAddress
+    const response = await resource(request, peer)
     await writeResponse(res, response, req.method === 'HEAD', signal)
     if (!signal.aborted) res.end()
   }
