@@ -16,7 +16,6 @@ The package carries browser-to-Host Remote calls, exact Fetch responses, and con
 - [Use this package](#use-this-package)
 - [Browser authentication and request trust](#browser-authentication-and-request-trust)
 - [Connection generation](#connection-generation)
-- [`/api` response compression](#api-response-compression)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
@@ -58,10 +57,6 @@ An ended `$events` stream, a Remote stream error, a non-ready opening item, or a
 
 Set the Host Connection row's `config.recovery` to override retry caps, the growth factor, or handshake warning and cancellation times; the [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-client-connection) lists accepted fields. The Host validates these values and injects them into each served page. The Client validates the bootstrap data before providing Connection and uses those defaults when Gateway starts its loop; explicit `start()` timing overrides take precedence. The growth factor must be finite and at least one. Readiness, failure, cancellation, or a hard deadline that occurs before the warning cancels that warning. Reload the page after changing Host recovery configuration.
 
-
-## `/api` response compression
-
-The bridge gzip-compresses complete JSON envelopes for clients that advertise `Accept-Encoding: gzip`: bodies of at least 1 KiB are passed through `gzipSync` when they actually shrink, and the response then carries `Content-Encoding: gzip`, a corrected `Content-Length`, and `Vary: Accept-Encoding`. Non-gzip clients, tiny bodies, and incompressible payloads keep the streaming write path. Buffering is safe because the carrier serves complete envelopes, not HTTP streams; the two event channels are WebSockets and never pass through the bridge. This keeps large unary responses (a session list with hundreds of sessions) within reach over low-bandwidth tunnels.
 
 <a id="model-experience"></a>
 ## Model Experience
