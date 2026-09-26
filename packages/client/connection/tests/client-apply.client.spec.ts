@@ -15,7 +15,7 @@ import {
 } from '../src/client/index.ts'
 
 type Win = {
-  location?: { hostname: string; origin?: string }
+  location?: { hostname: string; port?: string; origin?: string }
   __DSH_TRANSPORT__?: ClientTransportHooks
 }
 
@@ -131,6 +131,29 @@ describe('connection client apply', () => {
 
   it('reports non-loopback page authority through the connection handle', async () => {
     ;(globalThis as Win).location = { hostname: '192.0.2.20' }
+    expect((await mount()).isLoopback).toBe(false)
+  })
+
+  it('grants the loopback surface on a trusted bare host at any port', async () => {
+    vi.stubGlobal('__DSH_CONNECTION_TRUSTED_HOSTS__', ['192.0.2.10'])
+    ;(globalThis as Win).location = { hostname: '192.0.2.10', port: '3090' }
+    expect((await mount()).isLoopback).toBe(true)
+  })
+
+  it('matches a ported trusted entry only on its port', async () => {
+    vi.stubGlobal('__DSH_CONNECTION_TRUSTED_HOSTS__', ['192.0.2.10:3090'])
+    ;(globalThis as Win).location = { hostname: '192.0.2.10', port: '3090' }
+    expect((await mount()).isLoopback).toBe(true)
+    ;(globalThis as Win).location = { hostname: '192.0.2.10', port: '8080' }
+    expect((await mount()).isLoopback).toBe(false)
+    vi.stubGlobal('__DSH_CONNECTION_TRUSTED_HOSTS__', ['[fd00::10]:3090'])
+    ;(globalThis as Win).location = { hostname: 'fd00::10', port: '3090' }
+    expect((await mount()).isLoopback).toBe(true)
+  })
+
+  it('keeps an unlisted authority non-loopback beside trusted hosts', async () => {
+    vi.stubGlobal('__DSH_CONNECTION_TRUSTED_HOSTS__', ['192.0.2.10'])
+    ;(globalThis as Win).location = { hostname: '192.0.2.99' }
     expect((await mount()).isLoopback).toBe(false)
   })
 

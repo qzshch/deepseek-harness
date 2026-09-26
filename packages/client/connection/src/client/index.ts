@@ -110,11 +110,35 @@ export interface ClientTransportHooks {
 interface ClientTransportGlobal {
   __DSH_TRANSPORT__?: ClientTransportHooks
   __DSH_CONNECTION_RECOVERY__?: unknown
+  /** Bare `host`/`host:port` authorities the serving deployment trusts beyond loopback. */
+  __DSH_CONNECTION_TRUSTED_HOSTS__?: readonly string[]
 }
 
 /** Browser location fields used to classify loopback authority. */
 export interface ConnectionLocation {
   readonly hostname: string
+  /** Page port when the browser exposes one; absent for non-browser compositions. */
+  readonly port?: string
+}
+
+/**
+ * Whether the page authority matches one trusted-hosts entry. A bare `host`
+ * entry matches any port; a `host:port` entry also requires the port to match.
+ * Port-less page locations match bare entries only, never a ported entry.
+ */
+function isTrustedPageAuthority(hostname: string, port: string | undefined, trustedHosts: readonly string[]): boolean {
+  for (const entry of trustedHosts) {
+    // A bracketed IPv6 authority carries its port after `]:`; a bare host
+    // entry matches any port, a `host:port` entry also requires the port.
+    const colon = entry.lastIndexOf(':')
+    const hasPort = colon > entry.lastIndexOf(']')
+    const host = (hasPort ? entry.slice(0, colon) : entry).replace(/^\[(.*)\]$/, '$1')
+    const entryPort = hasPort ? entry.slice(colon + 1) : undefined
+    if (host !== hostname) continue
+    if (entryPort === undefined || entryPort === '') return true
+    if (port !== undefined && entryPort === port) return true
+  }
+  return false
 }
 
 /** Instance-local inputs for installing a Connection service. */
@@ -125,7 +149,10 @@ export interface ConnectionInstallOptions {
   readonly recovery?: ConnectionRecoveryConfig
   /** Page location; omit for a non-browser composition. */
   readonly location?: ConnectionLocation
+  /** Deployment trusted authorities that grant the loopback-equivalent surface. */
+  readonly trustedHosts?: readonly string[]
 }
+
 
 /**
  * The ctx.connection service API. API Gateway supplies generation readiness
@@ -200,12 +227,14 @@ function watchBrowserNetwork(controller: ConnectionController): () => void {
 /**
  * Install one Context-owned Connection service from explicit composition inputs.
  * @param ctx - client Cordis context.
- * @param options - physical carrier, reconnect timing, and page location.
+ * @param options - physical carrier, reconnect timing, page location, and the
+ * deployment's trusted authorities.
  */
 export function installConnection(ctx: Context, options: ConnectionInstallOptions = {}): void {
   const pageLocation = options.location
   const transport = options.transport
   const recovery = options.recovery ?? {}
+  const trustedHosts = options.trustedHosts ?? []
   const rpc = transport?.rpc ?? createWebConnectionRpc(transport?.fetch, transport?.openStream)
   let generationSource: ConnectionGenerationSource | undefined
   let owner: ConnectionOwner | undefined
@@ -245,7 +274,13 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
     publishState(undefined)
   }
   const handle: ConnectionHandle = {
-    isLoopback: transport?.ownsHost === true || pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
+    // A page served from a trustedHosts authority reaches the same privileged
+    // surface as a loopback page: the Host fence already refuses every other
+    // authority, so the deployment explicitly vouches for these names.
+    isLoopback: transport?.ownsHost === true
+      || pageLocation === undefined
+      || isLoopbackHostname(pageLocation.hostname)
+      || isTrustedPageAuthority(pageLocation.hostname, pageLocation.port, trustedHosts),
     generation: {
       getSnapshot: () => generation,
       subscribe: (listener) => {
@@ -318,9 +353,11 @@ export function apply(ctx: Context): void {
   const globals = globalThis as ClientTransportGlobal
   const pageLocation = typeof location === 'undefined' ? undefined : location
   const transport = globals.__DSH_TRANSPORT__
+  const trustedHosts = globals.__DSH_CONNECTION_TRUSTED_HOSTS__
   installConnection(ctx, {
     ...(transport === undefined ? {} : { transport }),
     recovery: resolveConnectionConfig(globals.__DSH_CONNECTION_RECOVERY__),
     ...(pageLocation === undefined ? {} : { location: pageLocation }),
+    ...(trustedHosts === undefined ? {} : { trustedHosts }),
   })
 }

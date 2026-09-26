@@ -204,6 +204,8 @@ describe('connection node half', () => {
           backoffBaseMs: 500, backoffFactor: 2, backoffMaxMs: 10_000,
           generationReadyWarnMs: 3_000, generationReadyTimeoutMs: 25_000,
         },
+      }, {
+        kind: 'global', name: '__DSH_CONNECTION_TRUSTED_HOSTS__', value: [],
       }])
       await dispose()
       const after: IndexInjection[] = []
