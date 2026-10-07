@@ -78,7 +78,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     ctx: Context,
     private readonly trustedHosts: readonly string[],
     private readonly browserAuth: BrowserAuth,
-    private readonly trustedClientIps: readonly ClientIpAllowlistEntry[],
+    private readonly trustedClientIps: readonly ClientIpAllowlistEntry[] = [],
   ) {
     super(ctx, 'connection')
     this.operator = new OperatorPeer(ctx)
