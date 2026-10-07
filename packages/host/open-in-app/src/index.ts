@@ -77,7 +77,7 @@ export const Config: z<Config> = z.object({
 
 /** Trust surface consumed here; the browser-side connection package owns the full type. */
 interface OpenInAppConnection {
-  requestRejection(request: { readonly headers: IncomingMessage['headers'] }): 401 | 403 | undefined
+  requestRejection(request: { readonly headers: IncomingMessage['headers']; readonly remoteAddress?: string | undefined }): 401 | 403 | undefined
 }
 
 /** The composition's connection service (typed locally: its package is browser-side). */
@@ -183,7 +183,10 @@ export function apply(ctx: Context, config: Config): void {
   }
   /** Answer an untrusted/unauthenticated request; true when it was rejected. */
   const rejected = (req: IncomingMessage, res: ServerResponse): boolean => {
-    const rejection = connectionOf(ctx).requestRejection(req)
+    const rejection = connectionOf(ctx).requestRejection({
+        headers: req.headers,
+        remoteAddress: req.socket?.remoteAddress,
+      })
     if (rejection === undefined) return false
     res.statusCode = rejection
     res.end()
