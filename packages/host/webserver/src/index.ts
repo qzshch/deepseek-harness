@@ -360,7 +360,10 @@ export class WebServer extends Service {
       const parsed = parseIpLiteral(value)
       if (parsed === undefined) throw notLiteralError(value)
       if (isWildcardAddress(parsed)) {
-        throw new Error(`webserver: host ${JSON.stringify(value)} is an unspecified (wildcard) address, which is not supported: binding every interface would expose remote code execution to the network; bind one concrete IPv4 or IPv6 address of a local interface instead`)
+        // Fork (trusted-CIDR deployments): a wildcard bind is allowed when the
+        // deployment fronts it with its own source-IP fence (trustedClientIps);
+        // warn instead of rejecting so one listen can cover every interface.
+        console.warn(`webserver: host ${JSON.stringify(value)} is an unspecified (wildcard) address; binding every interface relies on the deployment's own request fence (trustedClientIps)`)
       }
       return value
     }).required(),
