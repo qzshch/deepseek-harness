@@ -694,7 +694,7 @@ export class WebServer extends Service {
       // Socket facts ride as an own property: routes consume them as the
       // optional ConnectionTrustRequest fields with no Fetch equivalent.
       const request = new Request(target, { method: req.method, headers, signal: abort.signal })
-      ;(request as Request & { remoteAddress?: string }).remoteAddress = req.socket?.remoteAddress
+      ;(request as Request & { remoteAddress?: string | undefined }).remoteAddress = req.socket?.remoteAddress
       const response = await resource(request)
       await writeResponse(res, response, req.method === 'HEAD', abort.signal)
       if (!abort.signal.aborted) {
