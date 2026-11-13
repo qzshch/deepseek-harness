@@ -102,6 +102,8 @@ export interface WebAuthRequest {
   transport: 'http' | 'upgrade'
   signal?: AbortSignal | undefined
   socket?: { readonly destroyed: boolean } | undefined
+  /** TCP source address of the peer, when the carrier exposes it. */
+  remoteAddress?: string | undefined
 }
 
 /** Fixed route policy or a synchronous policy selector. */
@@ -633,7 +635,7 @@ export class WebServer extends Service {
       try {
         const request: WebAuthRequest = {
           headers: req.headers, method: req.method, url: target, transport: 'http',
-          signal: abort.signal, socket: req.socket,
+          signal: abort.signal, socket: req.socket, remoteAddress: req.socket?.remoteAddress,
         }
         const admission = this.authorize(request, responder.auth)
         if (abort.signal.aborted || request.socket?.destroyed) return
@@ -721,7 +723,7 @@ export class WebServer extends Service {
         try {
           const admission = this.authorize({
             headers: req.headers, method: req.method, url: target, transport: 'upgrade',
-            signal: abort.signal, socket,
+            signal: abort.signal, socket, remoteAddress: socket.remoteAddress,
           }, route.auth)
           if (abort.signal.aborted || socket.destroyed) return
           if (admission.kind === 'deny') {
