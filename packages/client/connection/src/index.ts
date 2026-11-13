@@ -144,6 +144,10 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
       assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
       webCtx.on('webserver/index-inject', (table) => {
         table.push({ kind: 'global', name: '__DSH_CONNECTION_RECOVERY__', value: recovery })
+        // Served pages read their authority against this list to grant the
+        // loopback-equivalent surface (e.g. host-persisted settings) on the
+        // names this deployment already vouches for at the request fence.
+        table.push({ kind: 'global', name: '__DSH_CONNECTION_TRUSTED_HOSTS__', value: trustedHosts })
       })
       const fetchHandler = connection.createSharedFetchHandler(API_PATH)
       const route: WebRoute = {
