@@ -723,7 +723,7 @@ export class WebServer extends Service {
         try {
           const admission = this.authorize({
             headers: req.headers, method: req.method, url: target, transport: 'upgrade',
-            signal: abort.signal, socket, remoteAddress: socket.remoteAddress,
+            signal: abort.signal, socket, remoteAddress: req.socket?.remoteAddress,
           }, route.auth)
           if (abort.signal.aborted || socket.destroyed) return
           if (admission.kind === 'deny') {
